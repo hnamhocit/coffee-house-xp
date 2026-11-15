@@ -24,6 +24,7 @@ import {
   Modal,
   ThemeIcon,
   Skeleton,
+  Pagination,
 } from '@mantine/core';
 import { Notifications, notifications } from '@mantine/notifications';
 import {
@@ -172,11 +173,15 @@ export const AdminApp: React.FC = () => {
 
   // Filters & Invoice state
   const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>('all');
-  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('today');
   const [customDate, setCustomDate] = useState<string>('');
   const [productSearch, setProductSearch] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState<string>('all');
   const [selectedInvoice, setSelectedInvoice] = useState<CustomerOrder | null>(null);
+
+  // Pagination for Orders (Tránh render hàng trăm đơn cũ gây giật lag)
+  const [orderPage, setOrderPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   // Manual POS Order Creation State (Khách gọi trực tiếp tại quán)
   const [manualOrderOpen, setManualOrderOpen] = useState(false);
@@ -360,6 +365,11 @@ export const AdminApp: React.FC = () => {
       console.warn('Audio chime error:', e);
     }
   };
+
+  // Reset order pagination to page 1 when filter changes
+  useEffect(() => {
+    setOrderPage(1);
+  }, [dateFilter, orderFilter, customDate]);
 
   // Track Auth state
   useEffect(() => {
@@ -698,18 +708,28 @@ export const AdminApp: React.FC = () => {
       ? `Ngày ${customDate.split('-').reverse().join('/')}`
       : 'Tất Cả';
 
-  // Group displayOrders by date for structured display
-  const groupedOrders = React.useMemo(() => {
-    const groupsMap = new Map<string, CustomerOrder[]>();
+  // Pagination calculations for Orders
+  const totalOrdersInView = displayOrders.length;
+  const totalPages = Math.max(1, Math.ceil(totalOrdersInView / pageSize));
+  const safePage = Math.min(orderPage, totalPages);
 
-    // Sort displayOrders descending (newest timestamp first)
+  // Paginated slice of orders (newest first, only pageSize orders in DOM)
+  const paginatedOrders = useMemo(() => {
     const sorted = [...displayOrders].sort((a, b) => {
       const timeA = typeof a.createdAt === 'number' ? a.createdAt : parseOrderDate(a.createdAt).getTime();
       const timeB = typeof b.createdAt === 'number' ? b.createdAt : parseOrderDate(b.createdAt).getTime();
       return timeB - timeA;
     });
 
-    for (const ord of sorted) {
+    const startIndex = (safePage - 1) * pageSize;
+    return sorted.slice(startIndex, startIndex + pageSize);
+  }, [displayOrders, safePage, pageSize]);
+
+  // Group ONLY paginatedOrders by date for structured display
+  const groupedOrders = useMemo(() => {
+    const groupsMap = new Map<string, CustomerOrder[]>();
+
+    for (const ord of paginatedOrders) {
       const key = formatDateKey(parseOrderDate(ord.createdAt));
       if (!groupsMap.has(key)) {
         groupsMap.set(key, []);
@@ -757,7 +777,7 @@ export const AdminApp: React.FC = () => {
     }
 
     return groups;
-  }, [displayOrders, todayKey, yesterdayKey]);
+  }, [paginatedOrders, todayKey, yesterdayKey]);
 
   const filteredProducts = useMemo(() => {
     let list = products.filter((p: MenuItem) => {
@@ -1406,6 +1426,27 @@ export const AdminApp: React.FC = () => {
                       )}
                     </Paper>
 
+                    {/* Top Pagination Status Bar */}
+                    {!ordersLoading && totalOrdersInView > 0 && (
+                      <Group justify="space-between" align="center" px={4} py={2} wrap="wrap" gap="xs">
+                        <Text size="xs" c="#546c5c">
+                          Đang xem <b>{(safePage - 1) * pageSize + 1} - {Math.min(safePage * pageSize, totalOrdersInView)}</b> trong tổng <b>{totalOrdersInView}</b> đơn
+                          {totalPages > 1 && ` (Trang ${safePage}/${totalPages})`}
+                        </Text>
+
+                        {totalPages > 1 && (
+                          <Pagination
+                            total={totalPages}
+                            value={safePage}
+                            onChange={setOrderPage}
+                            color="bamboo"
+                            size="xs"
+                            radius="sm"
+                          />
+                        )}
+                      </Group>
+                    )}
+
                     {/* Grouped Orders List By Date */}
                     {ordersLoading ? (
                       <Stack gap="sm">
@@ -1646,6 +1687,63 @@ export const AdminApp: React.FC = () => {
                           </div>
                         ))}
                       </Stack>
+                    )}
+
+                    {/* Bottom Full Pagination Controls */}
+                    {!ordersLoading && totalOrdersInView > 0 && (
+                      <Paper
+                        withBorder
+                        p="xs"
+                        radius="md"
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderColor: '#dceee1',
+                          boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                        }}
+                      >
+                        <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                          <Group gap="xs" align="center">
+                            <Text size="xs" c="#546c5c">
+                              Hiển thị <b>{(safePage - 1) * pageSize + 1} - {Math.min(safePage * pageSize, totalOrdersInView)}</b> / <b>{totalOrdersInView}</b> đơn
+                            </Text>
+                            <select
+                              value={pageSize}
+                              onChange={(e) => {
+                                setPageSize(Number(e.target.value));
+                                setOrderPage(1);
+                              }}
+                              aria-label="Số đơn mỗi trang"
+                              style={{
+                                padding: '4px 8px',
+                                borderRadius: '6px',
+                                border: '1px solid #b8d7be',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: '#174421',
+                                backgroundColor: '#ffffff',
+                                height: '32px',
+                                outline: 'none',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <option value={10}>10 đơn / trang</option>
+                              <option value={20}>20 đơn / trang</option>
+                              <option value={50}>50 đơn / trang</option>
+                            </select>
+                          </Group>
+
+                          {totalPages > 1 && (
+                            <Pagination
+                              total={totalPages}
+                              value={safePage}
+                              onChange={setOrderPage}
+                              color="bamboo"
+                              size="sm"
+                              radius="md"
+                            />
+                          )}
+                        </Group>
+                      </Paper>
                     )}
                   </Stack>
                 )}
