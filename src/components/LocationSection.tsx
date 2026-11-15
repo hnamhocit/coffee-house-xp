@@ -73,7 +73,7 @@ export const LocationSection: React.FC = () => {
           <Card
             withBorder
             radius="lg"
-            padding={{ base: 'md', sm: 'xl' }}
+            p={{ base: 'md', sm: 'xl' }}
             style={{
               backgroundColor: '#ffffff',
               border: '1px solid #badcc3',

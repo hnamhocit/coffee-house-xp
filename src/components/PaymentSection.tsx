@@ -50,7 +50,7 @@ export const PaymentSection: React.FC = () => {
         <Card
           withBorder
           radius="md"
-          padding={{ base: 'md', sm: 'xl' }}
+          p={{ base: 'md', sm: 'xl' }}
           style={{
             maxWidth: '780px',
             margin: '0 auto',

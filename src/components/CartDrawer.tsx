@@ -336,6 +336,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       onClose={onClose}
       position="right"
       size="md"
+      zIndex={2500}
       withCloseButton
       closeButtonProps={{ 'aria-label': 'Đóng giỏ hàng', size: 'lg' }}
       title={
@@ -371,7 +372,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           minHeight: 0,
         },
       }}
-      zIndex={1500}
     >
       {/* ========================================================
           CASE 1: KHÁCH ĐÃ CÓ ĐƠN HÀNG ĐANG XỬ LÝ (LIVE REALTIME ORDER)

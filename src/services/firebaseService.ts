@@ -169,6 +169,8 @@ export const createCustomerOrder = async (orderData: {
   totalAmount: number;
   paymentMethod: "vietqr" | "cash";
   note?: string;
+  status?: OrderStatus;
+  customerPaid?: boolean;
 }): Promise<{ id: string; orderCode: string }> => {
   try {
     const orderCode = `XP-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -194,9 +196,9 @@ export const createCustomerOrder = async (orderData: {
       items: cleanItems,
       totalAmount: Number(orderData.totalAmount) || 0,
       paymentMethod: orderData.paymentMethod || "vietqr",
-      status: "pending", // Bước 1: Quán đã nhận, đang chuẩn bị/soạn trước
+      status: orderData.status || "pending", // Mặc định 'pending' hoặc do chủ quán chọn khi tạo thủ công
       note: (orderData.note || "").trim(),
-      customerPaid: false,
+      customerPaid: orderData.customerPaid ?? (orderData.status === "completed"),
       createdAt: now,
       updatedAt: now,
     });

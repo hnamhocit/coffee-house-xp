@@ -169,71 +169,75 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
           </Button>
         )}
 
-        {/* Scroll To Top Button */}
+        {/* Scroll To Top Button (Desktop Only) */}
         {showScrollTop && (
-          <Tooltip label="Cuộn lên đầu trang" position="left" withArrow>
-            <ActionIcon
-              onClick={scrollToTop}
-              size={40}
-              radius="xl"
-              aria-label="Lên đầu trang"
-              style={{
-                backgroundColor: '#ffffff',
-                color: '#226135',
-                border: '1.5px solid #b8d7be',
-                boxShadow: '0 4px 14px rgba(0, 0, 0, 0.18)',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#226135';
-                e.currentTarget.style.color = '#ffffff';
-                e.currentTarget.style.transform = 'translateY(-2px)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#ffffff';
-                e.currentTarget.style.color = '#226135';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }}
-            >
-              <IconArrowUp size={20} stroke={2.5} />
-            </ActionIcon>
-          </Tooltip>
+          <div className="desktop-only-floating">
+            <Tooltip label="Cuộn lên đầu trang" position="left" withArrow>
+              <ActionIcon
+                onClick={scrollToTop}
+                size={40}
+                radius="xl"
+                aria-label="Lên đầu trang"
+                style={{
+                  backgroundColor: '#ffffff',
+                  color: '#226135',
+                  border: '1.5px solid #b8d7be',
+                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.18)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#226135';
+                  e.currentTarget.style.color = '#ffffff';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#ffffff';
+                  e.currentTarget.style.color = '#226135';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <IconArrowUp size={20} stroke={2.5} />
+              </ActionIcon>
+            </Tooltip>
+          </div>
         )}
 
         {/* Desktop-only Facebook Button */}
-        <Tooltip label="Ghé Fanpage Facebook Quán" position="left" withArrow>
-          <a
-            href={siteConfig.facebookUrl || '#'}
-            target={siteConfig.facebookUrl ? '_blank' : undefined}
-            rel="noopener noreferrer"
-            onClick={handleFacebookClick}
-            aria-label="Facebook quán"
-            className="floating-fb-btn"
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: '50%',
-              backgroundColor: '#ffffff',
-              boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transition: 'transform 0.15s ease',
-              overflow: 'hidden',
-              padding: 0,
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.08)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            <img
-              src="/images/facebook-logo.png"
-              alt="Facebook chính thức"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          </a>
-        </Tooltip>
+        <div className="desktop-only-floating">
+          <Tooltip label="Ghé Fanpage Facebook Quán" position="left" withArrow>
+            <a
+              href={siteConfig.facebookUrl || '#'}
+              target={siteConfig.facebookUrl ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              onClick={handleFacebookClick}
+              aria-label="Facebook quán"
+              className="floating-fb-btn"
+              style={{
+                width: 42,
+                height: 42,
+                borderRadius: '50%',
+                backgroundColor: '#ffffff',
+                boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'transform 0.15s ease',
+                overflow: 'hidden',
+                padding: 0,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.08)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              <img
+                src="/images/facebook-logo.png"
+                alt="Facebook chính thức"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            </a>
+          </Tooltip>
+        </div>
 
         {/* Official Zalo Logo Button */}
         <Tooltip label={`Nhắn Zalo Quán: ${siteConfig.hotlineDisplay}`} position="left" withArrow>

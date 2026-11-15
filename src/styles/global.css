@@ -178,12 +178,35 @@ h1, h2, h3, h4, h5, h6 {
   .mobile-cart-bar {
     display: flex !important;
     bottom: max(14px, env(safe-area-inset-bottom, 0px)) !important;
+    z-index: 1000 !important;
   }
 
-  /* On mobile screens, push contact icons up when cart has items */
-  .floating-contact-actions.has-cart-items {
-    bottom: calc(78px + max(14px, env(safe-area-inset-bottom, 0px))) !important;
+  /* Hide desktop-only floating buttons on mobile screens */
+  .desktop-only-floating {
+    display: none !important;
   }
+
+  /* When cart has items on mobile, completely hide floating contact buttons so they never cover the bottom cart bar or drink + buttons */
+  .floating-contact-actions.has-cart-items {
+    display: none !important;
+  }
+
+  /* When cart is empty on mobile, compact position in bottom-right corner */
+  .floating-contact-actions {
+    bottom: max(16px, env(safe-area-inset-bottom, 0px)) !important;
+    right: 12px !important;
+    gap: 6px !important;
+  }
+}
+
+/* Whenever any Cart Drawer or Mantine Modal is opened, strictly hide floating buttons and mobile cart bar */
+body:has(.mantine-Drawer-root) .floating-contact-actions,
+body:has(.mantine-Drawer-root) .mobile-cart-bar,
+body:has(.mantine-Modal-root) .floating-contact-actions,
+body:has(.mantine-Modal-root) .mobile-cart-bar {
+  display: none !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
 }
 
 /* Smooth scrolling for Cart Drawer */

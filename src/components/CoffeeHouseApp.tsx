@@ -19,6 +19,7 @@ import { subscribeProducts } from '../services/firebaseService';
 
 export const CoffeeHouseApp: React.FC = () => {
   const [products, setProducts] = useState<MenuItem[]>(MENU_ITEMS);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   const [originalMenuModalOpen, setOriginalMenuModalOpen] = useState(false);
@@ -28,8 +29,13 @@ export const CoffeeHouseApp: React.FC = () => {
   useEffect(() => {
     const unsubscribe = subscribeProducts((realtimeProducts) => {
       setProducts(realtimeProducts);
+      setProductsLoading(false);
     });
-    return () => unsubscribe();
+    const timer = setTimeout(() => setProductsLoading(false), 600);
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
   }, []);
 
   // Load cart from localStorage on client mount
@@ -141,7 +147,7 @@ export const CoffeeHouseApp: React.FC = () => {
         {/* Main Content Sections */}
         <main style={{ flex: 1 }}>
           <Hero onOpenOriginalMenu={() => setOriginalMenuModalOpen(true)} />
-          <MenuSection onAddToCart={handleAddToCart} items={products} />
+          <MenuSection onAddToCart={handleAddToCart} items={products} loading={productsLoading} />
           <AboutSection />
           <PaymentSection />
           <LocationSection />

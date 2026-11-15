@@ -17,6 +17,7 @@ import {
   Textarea,
   Box,
   Divider,
+  Skeleton,
 } from '@mantine/core';
 import {
   IconSearch,
@@ -38,6 +39,7 @@ import {
   type MenuCategory,
 } from '../data/menuData';
 import { siteConfig } from '../config/siteConfig';
+import { fuzzyMatchVietnamese, getSearchRelevanceScore } from '../utils/vietnameseSearch';
 
 interface MenuSectionProps {
   onAddToCart: (
@@ -48,9 +50,10 @@ interface MenuSectionProps {
     note?: string
   ) => void;
   items?: MenuItem[];
+  loading?: boolean;
 }
 
-export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items }) => {
+export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, loading = false }) => {
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -63,7 +66,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items }) 
   const [customNote, setCustomNote] = useState('');
   const [customQuantity, setCustomQuantity] = useState(1);
 
-  // Filtered and sorted items (Best Sellers prioritized first)
+  // Filtered and sorted items (Fuzzy Vietnamese Search & Best Sellers prioritized)
   const filteredItems = useMemo(() => {
     const list = sourceItems.filter((item) => {
       // Category filter
@@ -73,13 +76,25 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items }) 
         return false;
       }
 
-      // Search query
+      // Fuzzy & Vietnamese Accent-Insensitive Search
       if (searchQuery.trim() !== '') {
-        const query = searchQuery.toLowerCase().trim();
-        return item.name.toLowerCase().includes(query);
+        return fuzzyMatchVietnamese(
+          searchQuery,
+          item.name,
+          `${item.category} ${item.badge || ''}`
+        );
       }
       return true;
     });
+
+    // Nếu đang tìm kiếm, sắp xếp các món khớp chính xác / liên quan nhất lên đầu
+    if (searchQuery.trim() !== '') {
+      return [...list].sort((a, b) => {
+        const scoreB = getSearchRelevanceScore(searchQuery, b.name, b.category);
+        const scoreA = getSearchRelevanceScore(searchQuery, a.name, a.category);
+        return scoreB - scoreA;
+      });
+    }
 
     // Ưu tiên hiển thị các món Best Seller & Ưu đãi lên trước tiên
     return [...list].sort((a, b) => {
@@ -89,7 +104,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items }) 
       if (!isBestA && isBestB) return 1;
       return 0;
     });
-  }, [selectedCategory, searchQuery]);
+  }, [selectedCategory, searchQuery, sourceItems]);
 
   // Handle clicking on any drink card to select it
   const handleSelectDrink = (item: MenuItem) => {
@@ -248,7 +263,18 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items }) 
             </Group>
           </Group>
 
-          {filteredItems.length === 0 ? (
+          {loading ? (
+            <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing={{ base: 'xs', sm: 'md' }}>
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                <Card key={i} withBorder radius="md" p="xs" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
+                  <Skeleton height={140} radius="sm" mb="xs" />
+                  <Skeleton height={16} width="85%" radius="sm" mb={6} />
+                  <Skeleton height={14} width="45%" radius="sm" mb="xs" />
+                  <Skeleton height={34} radius="md" />
+                </Card>
+              ))}
+            </SimpleGrid>
+          ) : filteredItems.length === 0 ? (
             <Card withBorder radius="md" py="3rem" style={{ textAlign: 'center', backgroundColor: '#ffffff' }}>
               <Text size="md" fw={600} c="#2c3f33" mb="xs">
                 Không tìm thấy món "{searchQuery}"

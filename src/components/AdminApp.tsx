@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   MantineProvider,
   Container,
@@ -23,6 +23,7 @@ import {
   Textarea,
   Modal,
   ThemeIcon,
+  Skeleton,
 } from '@mantine/core';
 import { Notifications, notifications } from '@mantine/notifications';
 import {
@@ -66,12 +67,14 @@ import {
   fetchCustomerOrders,
   updateOrderStatus,
   deleteCustomerOrder,
+  createCustomerOrder,
 } from '../services/firebaseService';
 import type { MenuItem, MenuCategory } from '../data/menuData';
 import { MENU_ITEMS, CATEGORIES } from '../data/menuData';
-import type { CustomerOrder, OrderStatus } from '../types/order';
+import type { CustomerOrder, OrderStatus, OrderItemDetail } from '../types/order';
 import { theme } from '../theme/mantineTheme';
 import { WebsiteQrModal } from './WebsiteQrModal';
+import { fuzzyMatchVietnamese, getSearchRelevanceScore } from '../utils/vietnameseSearch';
 
 // Date filter preset types
 export type DateFilterPreset = 'all' | 'today' | 'yesterday' | '7days' | 'month' | 'custom';
@@ -134,14 +137,24 @@ export const getDayLabel = (
   };
 };
 
+// 2 UID DUY NHẤT ĐƯỢC PHÉP TRUY CẬP VÀO HỆ THỐNG QUẢN TRỊ ADMIN
+export const ALLOWED_ADMIN_UIDS = [
+  'hedaE90aVETHApCcrrjX0sYbehc2m',
+  '8lWfVmxxS9YMnzYm1vk405Fkdhw1',
+];
+
 export const AdminApp: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [ordersLoading, setOrdersLoading] = useState(true);
   const [products, setProducts] = useState<MenuItem[]>(MENU_ITEMS);
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [activeTab, setActiveTab] = useState<'orders' | 'products'>('orders');
   const [standeeModalOpen, setStandeeModalOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Check if current logged-in user is one of the 2 authorized admin UIDs
+  const isAllowedAdmin = Boolean(user && ALLOWED_ADMIN_UIDS.includes(user.uid));
 
   // Product edit/create state
   const [formOpen, setFormOpen] = useState(false);
@@ -164,6 +177,126 @@ export const AdminApp: React.FC = () => {
   const [productSearch, setProductSearch] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState<string>('all');
   const [selectedInvoice, setSelectedInvoice] = useState<CustomerOrder | null>(null);
+
+  // Manual POS Order Creation State (Khách gọi trực tiếp tại quán)
+  const [manualOrderOpen, setManualOrderOpen] = useState(false);
+  const [manualCustomerNote, setManualCustomerNote] = useState('');
+  const [manualPaymentMethod, setManualPaymentMethod] = useState<'cash' | 'vietqr'>('cash');
+  const [manualInitialStatus, setManualInitialStatus] = useState<OrderStatus>('pending');
+  const [manualCart, setManualCart] = useState<{
+    item: MenuItem;
+    quantity: number;
+    ice: string;
+    sugar: string;
+    note: string;
+  }[]>([]);
+  const [manualSearchQuery, setManualSearchQuery] = useState('');
+  const [savingManualOrder, setSavingManualOrder] = useState(false);
+
+  const handleOpenManualOrder = () => {
+    setManualCustomerNote('');
+    setManualPaymentMethod('cash');
+    setManualInitialStatus('pending');
+    setManualCart([]);
+    setManualSearchQuery('');
+    setManualOrderOpen(true);
+  };
+
+  const handleAddManualItem = (product: MenuItem) => {
+    setManualCart((prev) => {
+      const idx = prev.findIndex((p) => p.item.id === product.id);
+      if (idx > -1) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], quantity: next[idx].quantity + 1 };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          item: product,
+          quantity: 1,
+          ice: '100% Đá',
+          sugar: '100% Đường',
+          note: '',
+        },
+      ];
+    });
+  };
+
+  const handleUpdateManualQty = (idx: number, delta: number) => {
+    setManualCart((prev) => {
+      const next = [...prev];
+      const newQty = next[idx].quantity + delta;
+      if (newQty <= 0) {
+        next.splice(idx, 1);
+      } else {
+        next[idx] = { ...next[idx], quantity: newQty };
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateManualOption = (idx: number, field: 'ice' | 'sugar' | 'note', val: string) => {
+    setManualCart((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: val };
+      return next;
+    });
+  };
+
+  const handleSaveManualOrder = async () => {
+    if (manualCart.length === 0) {
+      notifications.show({
+        title: 'Chưa chọn món',
+        message: 'Vui lòng chọn ít nhất 1 món nước vào đơn.',
+        color: 'red',
+      });
+      return;
+    }
+
+    try {
+      setSavingManualOrder(true);
+      const totalAmount = manualCart.reduce(
+        (sum, p) => sum + p.quantity * p.item.price,
+        0
+      );
+
+      const items: OrderItemDetail[] = manualCart.map((p) => ({
+        id: p.item.id,
+        name: p.item.name,
+        price: p.item.price,
+        quantity: p.quantity,
+        totalPrice: p.quantity * p.item.price,
+        ice: p.ice,
+        sugar: p.sugar,
+        note: p.note,
+      }));
+
+      const res = await createCustomerOrder({
+        items,
+        totalAmount,
+        paymentMethod: manualPaymentMethod,
+        note: manualCustomerNote.trim(),
+        status: manualInitialStatus,
+        customerPaid: manualInitialStatus === 'completed',
+      });
+
+      notifications.show({
+        title: 'Tạo đơn tại quán thành công!',
+        message: `Đơn #${res.orderCode} (${formatPrice(totalAmount)}) đã được lưu vào hệ thống.`,
+        color: 'teal',
+      });
+      setManualOrderOpen(false);
+    } catch (err: any) {
+      notifications.show({
+        title: 'Lỗi tạo đơn',
+        message: err.message || 'Không thể tạo đơn hàng.',
+        color: 'red',
+      });
+    } finally {
+      setSavingManualOrder(false);
+    }
+  };
 
   // Sound chime tracking refs
   const prevOrderCountRef = useRef<number | null>(null);
@@ -237,17 +370,24 @@ export const AdminApp: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Subscribe to real-time products
+  // Subscribe to real-time products (ONLY IF AUTHORIZED ADMIN)
   useEffect(() => {
+    if (!isAllowedAdmin) return;
     const unsubscribe = subscribeProducts((realtimeProducts) => {
       setProducts(realtimeProducts);
     });
     return () => unsubscribe();
-  }, []);
+  }, [isAllowedAdmin]);
 
-  // Subscribe to real-time orders (runs immediately on mount!)
+  // Subscribe to real-time orders (ONLY IF AUTHORIZED ADMIN)
   useEffect(() => {
+    if (!isAllowedAdmin) {
+      setOrdersLoading(false);
+      return;
+    }
+
     const unsubscribe = subscribeCustomerOrders((realtimeOrders) => {
+      setOrdersLoading(false);
       // Check for incoming orders or payment notification to trigger chime
       if (prevOrderCountRef.current !== null) {
         if (realtimeOrders.length > prevOrderCountRef.current) {
@@ -280,16 +420,25 @@ export const AdminApp: React.FC = () => {
       setOrders(realtimeOrders);
     });
     return () => unsubscribe();
-  }, [soundEnabled]);
+  }, [isAllowedAdmin, soundEnabled]);
 
   const handleGoogleLogin = async () => {
     try {
-      await signInWithGoogle();
-      notifications.show({
-        title: 'Đăng nhập thành công!',
-        message: 'Chào mừng bạn đến với hệ thống quản trị quán.',
-        color: 'teal',
-      });
+      const loggedInUser = await signInWithGoogle();
+      if (!ALLOWED_ADMIN_UIDS.includes(loggedInUser.uid)) {
+        notifications.show({
+          title: 'Truy cập bị từ chối',
+          message: `Tài khoản ${loggedInUser.email} không có quyền quản trị quán.`,
+          color: 'red',
+          autoClose: 6000,
+        });
+      } else {
+        notifications.show({
+          title: 'Đăng nhập thành công!',
+          message: 'Chào mừng bạn đến với hệ thống quản trị quán.',
+          color: 'teal',
+        });
+      }
     } catch (err: any) {
       notifications.show({
         title: 'Đăng nhập thất bại',
@@ -610,15 +759,27 @@ export const AdminApp: React.FC = () => {
     return groups;
   }, [displayOrders, todayKey, yesterdayKey]);
 
-  const filteredProducts = products.filter((p) => {
-    if (productCategoryFilter !== 'all' && p.category !== productCategoryFilter) {
-      return false;
-    }
+  const filteredProducts = useMemo(() => {
+    let list = products.filter((p: MenuItem) => {
+      if (productCategoryFilter !== 'all' && p.category !== productCategoryFilter) {
+        return false;
+      }
+      if (productSearch.trim()) {
+        return fuzzyMatchVietnamese(productSearch, p.name, `${p.category} ${p.badge || ''}`);
+      }
+      return true;
+    });
+
     if (productSearch.trim()) {
-      return p.name.toLowerCase().includes(productSearch.toLowerCase().trim());
+      list = [...list].sort((a: MenuItem, b: MenuItem) => {
+        return (
+          getSearchRelevanceScore(productSearch, b.name, b.category) -
+          getSearchRelevanceScore(productSearch, a.name, a.category)
+        );
+      });
     }
-    return true;
-  });
+    return list;
+  }, [products, productCategoryFilter, productSearch]);
 
   return (
     <MantineProvider theme={theme} defaultColorScheme="light">
@@ -769,12 +930,57 @@ export const AdminApp: React.FC = () => {
         {/* MAIN BODY */}
         <main style={{ flex: 1, padding: '14px 0' }}>
           <Container size="xl" px={{ base: 'xs', sm: 'md' }}>
-            {/* State 1: Auth Loading */}
+            {/* State 1: Auth Loading - SKELETON LOADING DASHBOARD */}
             {authLoading ? (
-              <Stack align="center" justify="center" py="5rem">
-                <Text size="sm" c="#455b4e">
-                  Đang tải thông tin xác thực Firebase...
-                </Text>
+              <Stack gap="md" py="xs">
+                {/* Welcome Skeleton */}
+                <Paper withBorder p="md" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
+                  <Group justify="space-between" align="center">
+                    <div style={{ flex: 1 }}>
+                      <Skeleton height={20} width="240px" radius="sm" mb={8} />
+                      <Skeleton height={14} width="180px" radius="sm" />
+                    </div>
+                  </Group>
+                  <SimpleGrid cols={2} mt="md" spacing="xs">
+                    <Skeleton height={36} radius="sm" />
+                    <Skeleton height={36} radius="sm" />
+                  </SimpleGrid>
+                </Paper>
+
+                {/* 4 KPI Cards Skeleton */}
+                <SimpleGrid cols={{ base: 2, sm: 4 }} spacing={{ base: 'xs', sm: 'md' }}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <Paper key={i} withBorder p="md" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
+                      <Skeleton height={12} width="55%" radius="sm" mb={10} />
+                      <Skeleton height={28} width="75%" radius="sm" />
+                    </Paper>
+                  ))}
+                </SimpleGrid>
+
+                {/* Filter Bar Skeleton */}
+                <Paper withBorder p="xs" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
+                  <Group gap="xs">
+                    <Skeleton height={28} width={110} radius="sm" />
+                    <Skeleton height={28} width={90} radius="sm" />
+                    <Skeleton height={28} width={90} radius="sm" />
+                    <Skeleton height={28} width={90} radius="sm" />
+                  </Group>
+                </Paper>
+
+                {/* Order Cards Skeleton */}
+                <Stack gap="sm">
+                  {[1, 2, 3].map((i) => (
+                    <Paper key={i} withBorder p="md" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
+                      <Group justify="space-between" mb="sm">
+                        <Skeleton height={20} width={110} radius="sm" />
+                        <Skeleton height={16} width={80} radius="sm" />
+                      </Group>
+                      <Skeleton height={14} width="70%" radius="sm" mb={8} />
+                      <Skeleton height={14} width="45%" radius="sm" mb="md" />
+                      <Skeleton height={42} radius="md" />
+                    </Paper>
+                  ))}
+                </Stack>
               </Stack>
             ) : !user ? (
               /* State 2: Login Required (Full-page Card) */
@@ -827,8 +1033,54 @@ export const AdminApp: React.FC = () => {
                   </Text>
                 </Paper>
               </div>
+            ) : !isAllowedAdmin ? (
+              /* State 3: Access Denied (UID NOT in ALLOWED_ADMIN_UIDS) */
+              <div style={{ maxWidth: '500px', margin: '40px auto' }}>
+                <Paper
+                  withBorder
+                  p="xl"
+                  radius="lg"
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderColor: '#ffa8a8',
+                    boxShadow: '0 8px 30px rgba(224, 49, 49, 0.08)',
+                    textAlign: 'center',
+                  }}
+                >
+                  <ThemeIcon size={64} radius="xl" color="red" variant="light" style={{ margin: '0 auto 16px auto' }}>
+                    <IconLock size={32} />
+                  </ThemeIcon>
+
+                  <Title order={2} c="#c92a2a" style={{ fontFamily: 'var(--font-heading)', fontSize: '1.5rem', marginBottom: '8px' }}>
+                    Truy Cập Bị Từ Chối
+                  </Title>
+
+                  <Text size="sm" c="#495057" mb="sm" style={{ lineHeight: 1.5 }}>
+                    Tài khoản <b>{user.email}</b> không có quyền quản trị quán Xuân Phạm Coffee House.
+                  </Text>
+
+                  <Paper p="xs" radius="sm" withBorder style={{ backgroundColor: '#fff5f5', borderColor: '#ffc9c9', marginBottom: '16px' }}>
+                    <Text size="xs" c="#e03131" ff="monospace">
+                      UID: {user.uid} (Không nằm trong danh sách cấp phép)
+                    </Text>
+                  </Paper>
+
+                  <Text size="xs" c="#868e96" mb="lg">
+                    Hệ thống chỉ cho phép 2 tài khoản quản lý được chỉ định truy cập. Vui lòng đăng xuất và đăng nhập bằng tài khoản quản lý hợp lệ.
+                  </Text>
+
+                  <Group grow>
+                    <Button variant="default" size="sm" component="a" href="/">
+                      Về Trang Khách
+                    </Button>
+                    <Button color="red" size="sm" onClick={handleLogout} leftSection={<IconLogout size={16} />}>
+                      Đăng Xuất
+                    </Button>
+                  </Group>
+                </Paper>
+              </div>
             ) : (
-              /* State 3: Admin Dashboard (Full Page) */
+              /* State 4: Authorized Admin Dashboard (Full Page) */
               <Stack gap="md">
                 {/* Welcome & 2-Tab Navigation Bar */}
                 <Paper
@@ -889,7 +1141,7 @@ export const AdminApp: React.FC = () => {
                 {/* TAB 1: ORDERS & INVOICES */}
                 {activeTab === 'orders' && (
                   <Stack gap="md">
-                    {/* KPI Cards - Clean & Minimal (Zero noisy desc text under numbers) */}
+                    {/* KPI Cards - 4 Stages (Doanh thu | Đang soạn | Chờ thu tiền | Đã thu tiền) */}
                     <SimpleGrid cols={{ base: 2, sm: 4 }} spacing={{ base: 'xs', sm: 'md' }}>
                       {/* Card 1: Doanh Thu */}
                       <Paper
@@ -912,9 +1164,13 @@ export const AdminApp: React.FC = () => {
                             {dateFilterLabel}
                           </Badge>
                         </Group>
-                        <Text fw={800} size="lg" c="#226135" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
-                          {formatPrice(totalRevenueInPeriod)}
-                        </Text>
+                        {ordersLoading ? (
+                          <Skeleton height={26} width="75%" radius="sm" my={2} />
+                        ) : (
+                          <Text fw={800} size="lg" c="#226135" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
+                            {formatPrice(totalRevenueInPeriod)}
+                          </Text>
+                        )}
                       </Paper>
 
                       {/* Card 2: 1. Đang Soạn Món */}
@@ -940,12 +1196,16 @@ export const AdminApp: React.FC = () => {
                             </Badge>
                           )}
                         </Group>
-                        <Text fw={800} size="lg" c="#f59f00" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
-                          {pendingInPeriod.length} đơn
-                        </Text>
+                        {ordersLoading ? (
+                          <Skeleton height={26} width="50%" radius="sm" my={2} />
+                        ) : (
+                          <Text fw={800} size="lg" c="#f59f00" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
+                            {pendingInPeriod.length} đơn
+                          </Text>
+                        )}
                       </Paper>
 
-                      {/* Card 3: 2. Đã Phục Vụ Nước */}
+                      {/* Card 3: 2. Chờ Thu Tiền (Đã Phục Vụ Nước) */}
                       <Paper
                         withBorder
                         p={{ base: 'xs', sm: 'md' }}
@@ -960,7 +1220,7 @@ export const AdminApp: React.FC = () => {
                       >
                         <Group justify="space-between" align="center" mb={2} wrap="nowrap">
                           <Text size="11px" c="#184e77" fw={700} tt="uppercase">
-                            2. ĐÃ PHỤC VỤ
+                            2. CHỜ THU TIỀN
                           </Text>
                           {allServedOrders.length > servedInPeriod.length && (
                             <Badge size="xs" color="blue" variant="filled">
@@ -968,243 +1228,200 @@ export const AdminApp: React.FC = () => {
                             </Badge>
                           )}
                         </Group>
-                        <Text fw={800} size="lg" c="#1c7ed6" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
-                          {servedInPeriod.length} đơn
-                        </Text>
+                        {ordersLoading ? (
+                          <Skeleton height={26} width="50%" radius="sm" my={2} />
+                        ) : (
+                          <Text fw={800} size="lg" c="#1c7ed6" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
+                            {servedInPeriod.length} đơn
+                          </Text>
+                        )}
                       </Paper>
 
-                      {/* Card 4: Tổng Số Đơn */}
+                      {/* Card 4: 3. Đã Thu Tiền / Hoàn Tất */}
                       <Paper
                         withBorder
                         p={{ base: 'xs', sm: 'md' }}
                         radius="md"
                         style={{
                           backgroundColor: '#ffffff',
-                          borderColor: '#dceee1',
+                          borderColor: '#8ce99a',
                           display: 'flex',
                           flexDirection: 'column',
                           justifyContent: 'center',
                         }}
                       >
-                        <Text size="11px" c="#546c5c" fw={700} tt="uppercase" mb={2}>
-                          TỔNG SỐ ĐƠN
-                        </Text>
-                        <Text fw={800} size="lg" c="#14281b" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
-                          {dateFilteredOrders.length} đơn
-                        </Text>
+                        <Group justify="space-between" align="center" mb={2} wrap="nowrap">
+                          <Text size="11px" c="#2b8a3e" fw={700} tt="uppercase">
+                            3. ĐÃ THU TIỀN
+                          </Text>
+                          <Badge size="xs" variant="light" color="green">
+                            Tổng {dateFilteredOrders.length}
+                          </Badge>
+                        </Group>
+                        {ordersLoading ? (
+                          <Skeleton height={26} width="50%" radius="sm" my={2} />
+                        ) : (
+                          <Text fw={800} size="lg" c="#2b8a3e" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
+                            {completedInPeriod.length} đơn
+                          </Text>
+                        )}
                       </Paper>
                     </SimpleGrid>
 
-                    {/* Filter Controls: Date Preset Chips + Status Chips + Refresh */}
+                    {/* Filter Controls: 2 Clean Dropdowns + Tạo Đơn Tại Quán + Làm Mới */}
                     <Paper withBorder p="xs" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
-                      <Stack gap="xs">
-                        {/* ROW 1: DATE PRESETS & CUSTOM DATE */}
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                          gap: '8px',
+                          alignItems: 'center',
+                        }}
+                      >
+                        {/* Dropdown 1: Lọc Theo Ngày */}
                         <div>
-                          <Group justify="space-between" align="center" mb={6}>
-                            <Group gap={4} align="center">
-                              <IconCalendar size={15} color="#226135" />
-                              <Text size="11px" fw={700} c="#174421" tt="uppercase">
-                                Phân Loại Theo Ngày:
-                              </Text>
-                            </Group>
-
-                            {dateFilter === 'custom' && (
-                              <Button
-                                size="compact-xs"
-                                variant="subtle"
-                                color="red"
-                                leftSection={<IconX size={12} />}
-                                onClick={() => {
-                                  setDateFilter('all');
-                                  setCustomDate('');
-                                }}
-                              >
-                                Bỏ chọn ngày
-                              </Button>
-                            )}
-                          </Group>
-
-                          <div
+                          <select
+                            value={dateFilter}
+                            onChange={(e) => {
+                              const val = e.target.value as any;
+                              setDateFilter(val);
+                              if (val !== 'custom') {
+                                setCustomDate('');
+                              }
+                            }}
+                            aria-label="Phân loại theo ngày"
                             style={{
-                              display: 'flex',
-                              gap: '6px',
-                              overflowX: 'auto',
-                              WebkitOverflowScrolling: 'touch',
-                              scrollbarWidth: 'none',
-                              msOverflowStyle: 'none',
-                              padding: '2px 0',
-                              alignItems: 'center',
+                              width: '100%',
+                              padding: '8px 10px',
+                              borderRadius: '8px',
+                              border: '1.5px solid #b8d7be',
+                              backgroundColor: '#f8fdf9',
+                              color: '#174421',
+                              fontSize: '13px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              outline: 'none',
+                              height: '38px',
                             }}
                           >
-                            <Button
-                              size="xs"
-                              variant={dateFilter === 'all' ? 'filled' : 'subtle'}
-                              color="bamboo"
-                              onClick={() => {
-                                setDateFilter('all');
-                                setCustomDate('');
-                              }}
-                              style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                            >
-                              Tất Cả Lịch Sử ({orders.length})
-                            </Button>
-
-                            <Button
-                              size="xs"
-                              variant={dateFilter === 'today' ? 'filled' : 'subtle'}
-                              color="teal"
-                              onClick={() => {
-                                setDateFilter('today');
-                                setCustomDate('');
-                              }}
-                              style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                            >
-                              ⭐ Hôm Nay ({todayCount})
-                            </Button>
-
-                            <Button
-                              size="xs"
-                              variant={dateFilter === 'yesterday' ? 'filled' : 'subtle'}
-                              color="blue"
-                              onClick={() => {
-                                setDateFilter('yesterday');
-                                setCustomDate('');
-                              }}
-                              style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                            >
-                              ⏳ Hôm Qua ({yesterdayCount})
-                            </Button>
-
-                            <Button
-                              size="xs"
-                              variant={dateFilter === '7days' ? 'filled' : 'subtle'}
-                              color="cyan"
-                              onClick={() => {
-                                setDateFilter('7days');
-                                setCustomDate('');
-                              }}
-                              style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                            >
-                              🗓️ 7 Ngày Qua ({sevenDaysCount})
-                            </Button>
-
-                            <Button
-                              size="xs"
-                              variant={dateFilter === 'month' ? 'filled' : 'subtle'}
-                              color="indigo"
-                              onClick={() => {
-                                setDateFilter('month');
-                                setCustomDate('');
-                              }}
-                              style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                            >
-                              📊 Tháng Này ({thisMonthCount})
-                            </Button>
-
-                            {/* Custom Date Input */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                              <input
-                                type="date"
-                                value={customDate}
-                                onChange={(e) => {
-                                  setCustomDate(e.target.value);
-                                  if (e.target.value) {
-                                    setDateFilter('custom');
-                                  } else {
-                                    setDateFilter('all');
-                                  }
-                                }}
-                                title="Chọn ngày cụ thể để xem đơn"
-                                style={{
-                                  padding: '4px 8px',
-                                  borderRadius: '6px',
-                                  border: dateFilter === 'custom' ? '1.5px solid #226135' : '1px solid #b8d7be',
-                                  backgroundColor: dateFilter === 'custom' ? '#eef7f1' : '#ffffff',
-                                  color: '#174421',
-                                  fontSize: '12px',
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                  height: '30px',
-                                  outline: 'none',
-                                }}
-                              />
-                            </div>
-                          </div>
+                            <option value="today">⭐ Hôm Nay ({todayCount})</option>
+                            <option value="yesterday">⏳ Hôm Qua ({yesterdayCount})</option>
+                            <option value="7days">🗓️ 7 Ngày Qua ({sevenDaysCount})</option>
+                            <option value="month">📊 Tháng Này ({thisMonthCount})</option>
+                            <option value="all">🗂️ Tất Cả Lịch Sử ({orders.length})</option>
+                            <option value="custom">📆 Chọn Ngày Cụ Thể...</option>
+                          </select>
                         </div>
 
-                        <Divider color="#e5f0e8" />
-
-                        {/* ROW 2: ORDER STATUS FILTER + MANUAL REFRESH */}
+                        {/* Dropdown 2: Lọc Trạng Thái Đơn */}
                         <div>
-                          <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
-                            <div
-                              style={{
-                                display: 'flex',
-                                gap: '6px',
-                                overflowX: 'auto',
-                                WebkitOverflowScrolling: 'touch',
-                                scrollbarWidth: 'none',
-                                msOverflowStyle: 'none',
-                                padding: '2px 0',
-                                flex: 1,
-                              }}
-                            >
-                              <Button
-                                size="xs"
-                                variant={orderFilter === 'all' ? 'filled' : 'subtle'}
-                                color="bamboo"
-                                onClick={() => setOrderFilter('all')}
-                                style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                              >
-                                Tất Cả ({dateFilteredOrders.length})
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant={orderFilter === 'pending' ? 'filled' : 'subtle'}
-                                color="yellow"
-                                onClick={() => setOrderFilter('pending')}
-                                style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                              >
-                                1. Đang Soạn ({pendingInPeriod.length})
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant={orderFilter === 'served' ? 'filled' : 'subtle'}
-                                color="blue"
-                                onClick={() => setOrderFilter('served')}
-                                style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                              >
-                                2. Đã Phục Vụ ({servedInPeriod.length})
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant={orderFilter === 'completed' ? 'filled' : 'subtle'}
-                                color="teal"
-                                onClick={() => setOrderFilter('completed')}
-                                style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                              >
-                                3. Đã Thu Tiền ({completedInPeriod.length})
-                              </Button>
-                            </div>
+                          <select
+                            value={orderFilter}
+                            onChange={(e) => setOrderFilter(e.target.value as any)}
+                            aria-label="Phân loại theo trạng thái"
+                            style={{
+                              width: '100%',
+                              padding: '8px 10px',
+                              borderRadius: '8px',
+                              border: '1.5px solid #b8d7be',
+                              backgroundColor: '#f8fdf9',
+                              color: '#174421',
+                              fontSize: '13px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              outline: 'none',
+                              height: '38px',
+                            }}
+                          >
+                            <option value="all">🏷️ Tất Cả Trạng Thái ({dateFilteredOrders.length})</option>
+                            <option value="pending">🟡 1. Đang Soạn ({pendingInPeriod.length})</option>
+                            <option value="served">🔵 2. Chờ Thu Tiền ({servedInPeriod.length})</option>
+                            <option value="completed">🟢 3. Đã Thu Tiền ({completedInPeriod.length})</option>
+                          </select>
+                        </div>
 
+                        {/* Action Buttons: Tạo Đơn Tại Quán & Làm Mới */}
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <Button
+                            color="bamboo"
+                            size="sm"
+                            leftSection={<IconPlus size={16} />}
+                            onClick={handleOpenManualOrder}
+                            style={{ flex: 1, height: '38px', fontWeight: 700, whiteSpace: 'nowrap' }}
+                          >
+                            + Tạo Đơn Tại Quán
+                          </Button>
+
+                          <Tooltip label="Tải lại danh sách đơn hàng từ Firestore">
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="light"
                               color="bamboo"
-                              leftSection={<IconRefresh size={14} />}
+                              leftSection={<IconRefresh size={15} />}
                               loading={refreshingOrders}
                               onClick={handleManualRefreshOrders}
-                              style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: 700 }}
+                              style={{ height: '38px', fontWeight: 700, whiteSpace: 'nowrap' }}
                             >
                               Làm Mới
                             </Button>
-                          </Group>
+                          </Tooltip>
                         </div>
-                      </Stack>
+                      </div>
+
+                      {/* Custom Date Picker (when custom is selected) */}
+                      {dateFilter === 'custom' && (
+                        <Group gap="xs" mt="xs" align="center">
+                          <Text size="xs" fw={700} c="#174421">
+                            Chọn Ngày:
+                          </Text>
+                          <input
+                            type="date"
+                            value={customDate}
+                            onChange={(e) => setCustomDate(e.target.value)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              border: '1.5px solid #226135',
+                              backgroundColor: '#eef7f1',
+                              color: '#174421',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              outline: 'none',
+                              height: '34px',
+                            }}
+                          />
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            color="red"
+                            leftSection={<IconX size={14} />}
+                            onClick={() => {
+                              setDateFilter('today');
+                              setCustomDate('');
+                            }}
+                          >
+                            Hủy chọn ngày
+                          </Button>
+                        </Group>
+                      )}
                     </Paper>
 
                     {/* Grouped Orders List By Date */}
-                    {groupedOrders.length === 0 ? (
+                    {ordersLoading ? (
+                      <Stack gap="sm">
+                        {[1, 2, 3].map((i) => (
+                          <Paper key={i} withBorder p="md" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
+                            <Group justify="space-between" mb="sm">
+                              <Skeleton height={20} width={110} radius="sm" />
+                              <Skeleton height={16} width={80} radius="sm" />
+                            </Group>
+                            <Skeleton height={14} width="70%" radius="sm" mb={8} />
+                            <Skeleton height={14} width="45%" radius="sm" mb="md" />
+                            <Skeleton height={42} radius="md" />
+                          </Paper>
+                        ))}
+                      </Stack>
+                    ) : groupedOrders.length === 0 ? (
                       <Paper withBorder p="xl" radius="md" ta="center" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
                         <IconReceipt size={48} color="#badcc3" stroke={1.2} style={{ margin: '0 auto 8px auto', display: 'block' }} />
                         <Text fw={700} size="sm" c="#174421" mb={4}>
@@ -1230,68 +1447,29 @@ export const AdminApp: React.FC = () => {
                       <Stack gap="lg">
                         {groupedOrders.map((group) => (
                           <div key={group.dateKey}>
-                            {/* Day Header Section Banner */}
-                            <Paper
-                              withBorder
-                              p={{ base: 'xs', sm: 'sm' }}
-                              radius="md"
-                              mb="sm"
-                              style={{
-                                backgroundColor: group.isToday ? '#edf7f0' : group.isYesterday ? '#eef4ff' : '#f8faf9',
-                                borderColor: group.isToday ? '#76c48c' : group.isYesterday ? '#9ec1f9' : '#d2e8d8',
-                                boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
-                              }}
-                            >
-                              <Group justify="space-between" align="center" wrap="wrap" gap="xs">
-                                <Group gap="xs" align="center" wrap="nowrap">
-                                  <ThemeIcon
-                                    size="md"
-                                    radius="md"
-                                    color={group.isToday ? 'teal' : group.isYesterday ? 'blue' : 'gray'}
-                                    variant="light"
-                                  >
-                                    <IconCalendarEvent size={18} />
-                                  </ThemeIcon>
-                                  <Group gap={6} align="center" wrap="nowrap">
-                                    <Text
-                                      fw={800}
-                                      size="sm"
-                                      c={group.isToday ? '#174421' : group.isYesterday ? '#103975' : '#2d3748'}
-                                      style={{ fontFamily: 'var(--font-heading)' }}
-                                    >
-                                      {group.dayLabel}
+                            {/* Slim Date Separator ONLY when viewing all history */}
+                            {dateFilter === 'all' && (
+                              <Divider
+                                my="sm"
+                                label={
+                                  <Group gap={6} align="center">
+                                    <IconCalendar size={13} color="#226135" />
+                                    <Text size="xs" fw={700} c="#174421">
+                                      {group.dayLabel} ({group.formattedDate})
                                     </Text>
-                                    <Badge
-                                      size="xs"
-                                      variant="outline"
-                                      color={group.isToday ? 'teal' : group.isYesterday ? 'blue' : 'gray'}
-                                    >
-                                      {group.formattedDate}
+                                    <Badge size="xs" variant="light" color="teal">
+                                      {group.orders.length} đơn
                                     </Badge>
+                                    {group.dayTotalRevenue > 0 && (
+                                      <Badge size="xs" variant="outline" color="green">
+                                        {formatPrice(group.dayTotalRevenue)}
+                                      </Badge>
+                                    )}
                                   </Group>
-                                </Group>
-
-                                {/* Day metrics as clean badges - No noisy desc text under date */}
-                                <Group gap={6} wrap="wrap">
-                                  <Badge size="xs" variant="light" color="gray">
-                                    {group.orders.length} đơn
-                                  </Badge>
-                                  <Badge size="xs" variant={group.dayTotalRevenue > 0 ? 'filled' : 'outline'} color={group.dayTotalRevenue > 0 ? 'teal' : 'gray'}>
-                                    Doanh thu: {formatPrice(group.dayTotalRevenue)}
-                                  </Badge>
-                                  {group.dayPendingCount > 0 && (
-                                    <Badge size="xs" color="yellow" variant="filled">
-                                      {group.dayPendingCount} đang soạn
-                                    </Badge>
-                                  )}
-                                  {group.dayServedCount > 0 && (
-                                    <Badge size="xs" color="blue" variant="filled">
-                                      {group.dayServedCount} đã phục vụ
-                                    </Badge>
-                                  )}
-                                </Group>
-                              </Group>
-                            </Paper>
+                                }
+                                labelPosition="left"
+                              />
+                            )}
 
                             {/* List of Orders in this Day Group */}
                             <Stack gap="sm">
@@ -1805,6 +1983,357 @@ export const AdminApp: React.FC = () => {
               <Button color="bamboo" onClick={handleSaveProduct} loading={savingProduct} style={{ fontWeight: 700 }}>
                 Lưu Món Nước
               </Button>
+            </Group>
+          </Stack>
+        </Modal>
+
+        {/* MODAL: TẠO ĐƠN HÀNG TẠI QUÁN (POS) */}
+        <Modal
+          opened={manualOrderOpen}
+          onClose={() => setManualOrderOpen(false)}
+          title={
+            <Group gap={8} align="center">
+              <ThemeIcon size="md" color="bamboo" radius="md" variant="light">
+                <IconPlus size={18} />
+              </ThemeIcon>
+              <div>
+                <Text fw={800} size="md" c="#174421" style={{ fontFamily: 'var(--font-heading)' }}>
+                  Tạo Đơn Hàng Tại Quán
+                </Text>
+                <Text size="11px" c="#546c5c">
+                  Dành cho khách gọi trực tiếp tại quầy hoặc mua mang về
+                </Text>
+              </div>
+            </Group>
+          }
+          size="lg"
+          radius="md"
+          zIndex={1600}
+        >
+          <Stack gap="md">
+            {/* Top Order Information */}
+            <Paper p="sm" withBorder radius="md" style={{ backgroundColor: '#f8faf9', borderColor: '#dceee1' }}>
+              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
+                <div>
+                  <Text size="xs" fw={700} c="#174421" mb={4}>
+                    Bàn / Tên Khách:
+                  </Text>
+                  <TextInput
+                    placeholder="VD: Bàn 3, Mang về..."
+                    value={manualCustomerNote}
+                    onChange={(e) => setManualCustomerNote(e.target.value)}
+                    size="sm"
+                  />
+                </div>
+
+                <div>
+                  <Text size="xs" fw={700} c="#174421" mb={4}>
+                    Hình thức thanh toán:
+                  </Text>
+                  <select
+                    value={manualPaymentMethod}
+                    onChange={(e) => setManualPaymentMethod(e.target.value as any)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid #b8d7be',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      color: '#174421',
+                      backgroundColor: '#ffffff',
+                      minHeight: '36px',
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="cash">💵 Tiền mặt tại quầy</option>
+                    <option value="vietqr">💳 Chuyển khoản VietQR</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Text size="xs" fw={700} c="#174421" mb={4}>
+                    Trạng thái khởi tạo:
+                  </Text>
+                  <select
+                    value={manualInitialStatus}
+                    onChange={(e) => setManualInitialStatus(e.target.value as any)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid #b8d7be',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      color: '#174421',
+                      backgroundColor: '#ffffff',
+                      minHeight: '36px',
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="pending">🟡 1. Đang soạn món (chờ pha chế)</option>
+                    <option value="completed">🟢 3. Đã thu tiền ngay (khách đã trả)</option>
+                  </select>
+                </div>
+              </SimpleGrid>
+            </Paper>
+
+            {/* Product Selector with Search */}
+            <div>
+              <Group justify="space-between" align="center" mb={6}>
+                <Text size="xs" fw={800} c="#174421" tt="uppercase">
+                  1. Chọn Món Nước Vào Đơn:
+                </Text>
+                <Badge size="xs" variant="light" color="teal">
+                  {products.length} món sẵn có
+                </Badge>
+              </Group>
+
+              <TextInput
+                placeholder="Tìm nhanh tên món (trà sữa, cà phê, sinh tố...)"
+                leftSection={<IconSearch size={14} color="#789080" />}
+                value={manualSearchQuery}
+                onChange={(e) => setManualSearchQuery(e.target.value)}
+                size="xs"
+                mb="xs"
+              />
+
+              <div
+                style={{
+                  maxHeight: '190px',
+                  overflowY: 'auto',
+                  border: '1px solid #e5f0e8',
+                  borderRadius: '8px',
+                  padding: '6px',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={6}>
+                  {products
+                    .filter((p) =>
+                      manualSearchQuery.trim() === ''
+                        ? true
+                        : fuzzyMatchVietnamese(
+                            manualSearchQuery,
+                            p.name,
+                            `${p.category} ${p.badge || ''}`
+                          )
+                    )
+                    .sort((a, b) => {
+                      if (!manualSearchQuery.trim()) return 0;
+                      return (
+                        getSearchRelevanceScore(manualSearchQuery, b.name, b.category) -
+                        getSearchRelevanceScore(manualSearchQuery, a.name, a.category)
+                      );
+                    })
+                    .map((prod) => (
+                      <Paper
+                        key={prod.id}
+                        withBorder
+                        p="xs"
+                        radius="sm"
+                        style={{
+                          backgroundColor: '#fafcfb',
+                          borderColor: '#e8f3ec',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '8px',
+                        }}
+                      >
+                        <Group gap={8} align="center" style={{ minWidth: 0, flex: 1 }}>
+                          <img
+                            src={prod.image}
+                            alt={prod.name}
+                            style={{ width: 34, height: 34, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
+                          />
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <Text size="xs" fw={700} truncate c="#174421">
+                              {prod.name}
+                            </Text>
+                            <Text size="11px" fw={700} c="#226135">
+                              {formatPrice(prod.price)}
+                            </Text>
+                          </div>
+                        </Group>
+
+                        <Button
+                          size="compact-xs"
+                          color="bamboo"
+                          leftSection={<IconPlus size={12} />}
+                          onClick={() => handleAddManualItem(prod)}
+                          style={{ fontWeight: 700, flexShrink: 0 }}
+                        >
+                          Thêm
+                        </Button>
+                      </Paper>
+                    ))}
+                </SimpleGrid>
+              </div>
+            </div>
+
+            {/* Selected Items in Manual Order */}
+            <div>
+              <Group justify="space-between" align="center" mb={6}>
+                <Text size="xs" fw={800} c="#174421" tt="uppercase">
+                  2. Món Đã Chọn Trong Đơn ({manualCart.reduce((s, it) => s + it.quantity, 0)} ly):
+                </Text>
+                {manualCart.length > 0 && (
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    color="red"
+                    onClick={() => setManualCart([])}
+                  >
+                    Xóa tất cả
+                  </Button>
+                )}
+              </Group>
+
+              {manualCart.length === 0 ? (
+                <Paper p="md" withBorder radius="md" ta="center" style={{ backgroundColor: '#fcfdfd', borderColor: '#e8f3ec' }}>
+                  <Text size="xs" c="#607667">
+                    Chưa có món nào trong đơn. Vui lòng nhấn nút <b>[Thêm]</b> ở danh sách trên.
+                  </Text>
+                </Paper>
+              ) : (
+                <Stack gap={6} style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {manualCart.map((item, idx) => (
+                    <Paper
+                      key={idx}
+                      withBorder
+                      p="xs"
+                      radius="md"
+                      style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}
+                    >
+                      <Group justify="space-between" align="center" mb={4}>
+                        <div>
+                          <Text size="xs" fw={700} c="#174421">
+                            {item.item.name}
+                          </Text>
+                          <Text size="11px" fw={600} c="#226135">
+                            {formatPrice(item.item.price * item.quantity)} ({formatPrice(item.item.price)}/ly)
+                          </Text>
+                        </div>
+
+                        {/* Quantity Controls */}
+                        <Group gap={4} align="center">
+                          <ActionIcon
+                            size="sm"
+                            variant="default"
+                            onClick={() => handleUpdateManualQty(idx, -1)}
+                          >
+                            -
+                          </ActionIcon>
+                          <Text size="xs" fw={800} style={{ minWidth: 20, textAlign: 'center' }}>
+                            {item.quantity}
+                          </Text>
+                          <ActionIcon
+                            size="sm"
+                            variant="default"
+                            onClick={() => handleUpdateManualQty(idx, 1)}
+                          >
+                            +
+                          </ActionIcon>
+                          <ActionIcon
+                            size="sm"
+                            color="red"
+                            variant="subtle"
+                            onClick={() => handleUpdateManualQty(idx, -item.quantity)}
+                          >
+                            <IconTrash size={14} />
+                          </ActionIcon>
+                        </Group>
+                      </Group>
+
+                      {/* Options: Ice & Sugar & Note */}
+                      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing={4} mt={4}>
+                        <select
+                          value={item.ice}
+                          onChange={(e) => handleUpdateManualOption(idx, 'ice', e.target.value)}
+                          style={{
+                            padding: '4px 6px',
+                            borderRadius: '4px',
+                            border: '1px solid #dceee1',
+                            fontSize: '11px',
+                            backgroundColor: '#fafcfb',
+                            color: '#174421',
+                            outline: 'none',
+                          }}
+                        >
+                          <option value="100% Đá">100% Đá</option>
+                          <option value="50% Đá">50% Đá</option>
+                          <option value="Không Đá">Không Đá</option>
+                        </select>
+
+                        <select
+                          value={item.sugar}
+                          onChange={(e) => handleUpdateManualOption(idx, 'sugar', e.target.value)}
+                          style={{
+                            padding: '4px 6px',
+                            borderRadius: '4px',
+                            border: '1px solid #dceee1',
+                            fontSize: '11px',
+                            backgroundColor: '#fafcfb',
+                            color: '#174421',
+                            outline: 'none',
+                          }}
+                        >
+                          <option value="100% Đường">100% Đường</option>
+                          <option value="70% Đường">70% Đường</option>
+                          <option value="50% Đường">50% Đường</option>
+                          <option value="Không Đường">Không Đường</option>
+                        </select>
+
+                        <input
+                          type="text"
+                          placeholder="Ghi chú (ít béo, nhiều kem...)"
+                          value={item.note}
+                          onChange={(e) => handleUpdateManualOption(idx, 'note', e.target.value)}
+                          style={{
+                            padding: '4px 6px',
+                            borderRadius: '4px',
+                            border: '1px solid #dceee1',
+                            fontSize: '11px',
+                            backgroundColor: '#fafcfb',
+                            color: '#174421',
+                            outline: 'none',
+                          }}
+                        />
+                      </SimpleGrid>
+                    </Paper>
+                  ))}
+                </Stack>
+              )}
+            </div>
+
+            <Divider />
+
+            {/* Total Amount & Submit Buttons */}
+            <Group justify="space-between" align="center" wrap="wrap">
+              <div>
+                <Text size="xs" c="#546c5c">
+                  Tổng thanh toán:
+                </Text>
+                <Text fw={800} size="xl" c="#226135" style={{ fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
+                  {formatPrice(manualCart.reduce((s, it) => s + it.quantity * it.item.price, 0))}
+                </Text>
+              </div>
+
+              <Group gap="xs">
+                <Button variant="default" onClick={() => setManualOrderOpen(false)}>
+                  Hủy
+                </Button>
+                <Button
+                  color="bamboo"
+                  onClick={handleSaveManualOrder}
+                  loading={savingManualOrder}
+                  leftSection={<IconCheck size={18} />}
+                  style={{ fontWeight: 700 }}
+                >
+                  Xác Nhận Tạo Đơn
+                </Button>
+              </Group>
             </Group>
           </Stack>
         </Modal>
