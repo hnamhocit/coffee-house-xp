@@ -75,6 +75,7 @@ import { MENU_ITEMS, CATEGORIES } from '../data/menuData';
 import type { CustomerOrder, OrderStatus, OrderItemDetail } from '../types/order';
 import { theme } from '../theme/mantineTheme';
 import { WebsiteQrModal } from './WebsiteQrModal';
+import { siteConfig } from '../config/siteConfig';
 import { fuzzyMatchVietnamese, getSearchRelevanceScore } from '../utils/vietnameseSearch';
 
 // Date filter preset types
@@ -178,6 +179,7 @@ export const AdminApp: React.FC = () => {
   const [productSearch, setProductSearch] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState<string>('all');
   const [selectedInvoice, setSelectedInvoice] = useState<CustomerOrder | null>(null);
+  const [qrModalOrder, setQrModalOrder] = useState<CustomerOrder | null>(null);
 
   // Pagination for Orders (Tránh render hàng trăm đơn cũ gây giật lag)
   const [orderPage, setOrderPage] = useState<number>(1);
@@ -286,12 +288,37 @@ export const AdminApp: React.FC = () => {
         customerPaid: manualInitialStatus === 'completed',
       });
 
-      notifications.show({
-        title: 'Tạo đơn tại quán thành công!',
-        message: `Đơn #${res.orderCode} (${formatPrice(totalAmount)}) đã được lưu vào hệ thống.`,
-        color: 'teal',
-      });
+      const createdOrder: CustomerOrder = {
+        id: res.id,
+        orderCode: res.orderCode,
+        items,
+        totalAmount,
+        paymentMethod: manualPaymentMethod,
+        note: manualCustomerNote.trim(),
+        status: manualInitialStatus,
+        customerPaid: manualInitialStatus === 'completed',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
       setManualOrderOpen(false);
+
+      // Nếu khách chọn chuyển khoản VietQR và chưa thu tiền: tự động mở ngay popup mã QR cho khách quét tại quầy
+      if (manualPaymentMethod === 'vietqr' && manualInitialStatus !== 'completed') {
+        setQrModalOrder(createdOrder);
+        notifications.show({
+          title: 'Đã tạo đơn - Mở mã QR VietQR',
+          message: `Đơn #${res.orderCode} (${formatPrice(totalAmount)}) - Đang mở mã QR cho khách quét tại quầy.`,
+          color: 'teal',
+          autoClose: 6000,
+        });
+      } else {
+        notifications.show({
+          title: 'Tạo đơn tại quán thành công!',
+          message: `Đơn #${res.orderCode} (${formatPrice(totalAmount)}) đã được lưu vào hệ thống.`,
+          color: 'teal',
+        });
+      }
     } catch (err: any) {
       notifications.show({
         title: 'Lỗi tạo đơn',
@@ -1645,17 +1672,30 @@ export const AdminApp: React.FC = () => {
                                       </Button>
                                     )}
 
-                                    {/* Sub-actions Row (View invoice, Cancel, Delete) */}
-                                    <Group justify="space-between" align="center" mt={2}>
-                                      <Button
-                                        size="xs"
-                                        variant="light"
-                                        color="gray"
-                                        leftSection={<IconEye size={14} />}
-                                        onClick={() => setSelectedInvoice(order)}
-                                      >
-                                        Xem Hóa Đơn
-                                      </Button>
+                                    {/* Sub-actions Row (View invoice, VietQR modal, Cancel, Delete) */}
+                                    <Group justify="space-between" align="center" mt={2} wrap="wrap" gap="xs">
+                                      <Group gap={6}>
+                                        <Button
+                                          size="xs"
+                                          variant="light"
+                                          color="gray"
+                                          leftSection={<IconEye size={14} />}
+                                          onClick={() => setSelectedInvoice(order)}
+                                        >
+                                          Xem Hóa Đơn
+                                        </Button>
+
+                                        <Button
+                                          size="xs"
+                                          variant={order.paymentMethod === 'vietqr' ? 'filled' : 'light'}
+                                          color="teal"
+                                          leftSection={<IconQrcode size={14} />}
+                                          onClick={() => setQrModalOrder(order)}
+                                          style={{ fontWeight: 700 }}
+                                        >
+                                          Mã VietQR
+                                        </Button>
+                                      </Group>
 
                                       <Group gap={6}>
                                         {order.status !== 'cancelled' && order.status !== 'completed' && (
@@ -2147,6 +2187,11 @@ export const AdminApp: React.FC = () => {
                     <option value="cash">💵 Tiền mặt tại quầy</option>
                     <option value="vietqr">💳 Chuyển khoản VietQR</option>
                   </select>
+                  {manualPaymentMethod === 'vietqr' && (
+                    <Text size="10px" c="#226135" mt={4} fw={600}>
+                      💡 Tự động bật mã QR cho khách quét ngay sau khi tạo đơn
+                    </Text>
+                  )}
                 </div>
 
                 <div>
@@ -2511,6 +2556,152 @@ export const AdminApp: React.FC = () => {
               </Button>
             </Stack>
           )}
+        </Modal>
+
+        {/* MODAL: MÃ VIETQR THANH TOÁN CHO KHÁCH QUÉT TẠI QUẦY */}
+        <Modal
+          opened={!!qrModalOrder}
+          onClose={() => setQrModalOrder(null)}
+          title={
+            <Group gap={8} align="center">
+              <ThemeIcon size="md" color="teal" radius="md" variant="light">
+                <IconQrcode size={20} />
+              </ThemeIcon>
+              <div>
+                <Text fw={800} size="md" c="#174421" style={{ fontFamily: 'var(--font-heading)' }}>
+                  Mã QR Thanh Toán #{qrModalOrder?.orderCode}
+                </Text>
+                <Text size="11px" c="#546c5c">
+                  Đưa màn hình cho khách quét bằng ứng dụng ngân hàng
+                </Text>
+              </div>
+            </Group>
+          }
+          size="md"
+          radius="md"
+          zIndex={1700}
+        >
+          {qrModalOrder && (() => {
+            const qrUrl = `https://img.vietqr.io/image/${siteConfig.bankInfo.bankShortCode}-${siteConfig.bankInfo.accountNumber}-compact2.png?amount=${qrModalOrder.totalAmount}&addInfo=XP%20${qrModalOrder.orderCode}&accountName=${encodeURIComponent(siteConfig.bankInfo.accountHolder)}`;
+
+            return (
+              <Stack gap="sm" align="center" ta="center">
+                {/* Big Crisp QR Image for Easy Scanning */}
+                <div
+                  style={{
+                    padding: '8px',
+                    backgroundColor: '#ffffff',
+                    borderRadius: '12px',
+                    border: '2.5px solid #226135',
+                    boxShadow: '0 6px 20px rgba(34, 97, 53, 0.12)',
+                    display: 'inline-block',
+                  }}
+                >
+                  <img
+                    src={qrUrl}
+                    alt={`VietQR đơn #${qrModalOrder.orderCode}`}
+                    style={{
+                      width: '100%',
+                      maxWidth: '260px',
+                      height: 'auto',
+                      aspectRatio: '1',
+                      display: 'block',
+                      borderRadius: '6px',
+                    }}
+                  />
+                </div>
+
+                {/* Amount & Bank Info Details */}
+                <Paper p="xs" radius="md" withBorder style={{ width: '100%', backgroundColor: '#f8faf9', borderColor: '#dceee1', textAlign: 'left' }}>
+                  <Group justify="space-between" mb={4}>
+                    <Text size="xs" c="#546c5c" fw={600}>Số tiền thanh toán:</Text>
+                    <Text fw={800} size="lg" c="#226135" style={{ fontFamily: 'var(--font-heading)' }}>
+                      {formatPrice(qrModalOrder.totalAmount)}
+                    </Text>
+                  </Group>
+
+                  <Divider my={4} color="#e5f0e8" />
+
+                  <Group justify="space-between" mb={2}>
+                    <Text size="xs" c="#546c5c">Ngân hàng:</Text>
+                    <Text size="xs" fw={700} c="#174421">
+                      {siteConfig.bankInfo.bankName} ({siteConfig.bankInfo.bankShortCode})
+                    </Text>
+                  </Group>
+
+                  <Group justify="space-between" mb={2}>
+                    <Text size="xs" c="#546c5c">Số tài khoản:</Text>
+                    <Text size="xs" fw={700} ff="monospace" c="#174421">
+                      {siteConfig.bankInfo.accountNumber}
+                    </Text>
+                  </Group>
+
+                  <Group justify="space-between" mb={2}>
+                    <Text size="xs" c="#546c5c">Chủ tài khoản:</Text>
+                    <Text size="xs" fw={700} c="#174421">
+                      {siteConfig.bankInfo.accountHolder}
+                    </Text>
+                  </Group>
+
+                  <Group justify="space-between">
+                    <Text size="xs" c="#546c5c">Nội dung CK:</Text>
+                    <Badge size="sm" color="teal" variant="light">
+                      XP {qrModalOrder.orderCode}
+                    </Badge>
+                  </Group>
+                </Paper>
+
+                {/* Quick Actions for Owner */}
+                <Stack gap="xs" style={{ width: '100%' }} mt="xs">
+                  {qrModalOrder.status !== 'completed' ? (
+                    <Button
+                      color="teal"
+                      size="md"
+                      fullWidth
+                      leftSection={<IconCheck size={20} />}
+                      onClick={async () => {
+                        await handleStatusChange(qrModalOrder.id, 'completed');
+                        setQrModalOrder(null);
+                        notifications.show({
+                          title: 'Đã hoàn tất thanh toán!',
+                          message: `Đơn #${qrModalOrder.orderCode} (${formatPrice(qrModalOrder.totalAmount)}) đã được xác nhận thu tiền.`,
+                          color: 'teal',
+                        });
+                      }}
+                      style={{ fontWeight: 800, minHeight: '44px' }}
+                    >
+                      ✓ Khách Đã Chuyển Tiền (Xác Nhận Đã Thu)
+                    </Button>
+                  ) : (
+                    <Badge size="lg" color="green" variant="filled" fullWidth py="sm">
+                      ĐƠN HÀNG ĐÃ HOÀN TẤT & THU TIỀN
+                    </Badge>
+                  )}
+
+                  <Group grow>
+                    <Button
+                      component="a"
+                      href={qrUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      variant="light"
+                      color="bamboo"
+                      size="xs"
+                    >
+                      Mở Ảnh QR Lớn
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="xs"
+                      onClick={() => setQrModalOrder(null)}
+                    >
+                      Đóng Cửa Sổ
+                    </Button>
+                  </Group>
+                </Stack>
+              </Stack>
+            );
+          })()}
         </Modal>
 
         {/* MODAL: STANDEE QR CODE QUÁN (CHO KHÁCH QUÉT VÀO WEB GỌI MÓN) */}
