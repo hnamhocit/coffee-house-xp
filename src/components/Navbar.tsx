@@ -9,26 +9,47 @@ import {
   Drawer,
   Stack,
   Divider,
+  Indicator,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconShoppingCart,
   IconMenu2,
+  IconX,
   IconPlant,
+  IconSettings,
+  IconQrcode,
 } from '@tabler/icons-react';
 import { siteConfig } from '../config/siteConfig';
 
 interface NavbarProps {
   cartItemCount: number;
-  onOpenCart: () => void;
+  onOpenCart?: () => void;
+  onToggleCart: () => void;
+  isCartOpen?: boolean;
   onOpenOriginalMenu: () => void;
+  onOpenAdmin?: () => void;
+  onOpenWebsiteQr?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   cartItemCount,
   onOpenCart,
+  onToggleCart,
+  isCartOpen = false,
   onOpenOriginalMenu,
+  onOpenAdmin,
+  onOpenWebsiteQr,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleCartClick = () => {
+    if (onToggleCart) {
+      onToggleCart();
+    } else if (onOpenCart) {
+      onOpenCart();
+    }
+  };
 
   const navLinks = [
     { label: 'Thực Đơn', href: '#thuc-don' },
@@ -137,16 +158,23 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action: Cart (Adaptive Mobile/Desktop) & Menu toggle */}
           <Group gap="xs" wrap="nowrap" align="center" style={{ flexShrink: 0 }}>
-            {/* Mobile Cart ActionIcon */}
-            <div style={{ position: 'relative' }}>
+            {/* Mobile Cart ActionIcon with clean Indicator Badge (Never clipped) */}
+            <Indicator
+              label={cartItemCount}
+              disabled={cartItemCount === 0}
+              color="red"
+              size={18}
+              offset={4}
+              withBorder
+              hiddenFrom="sm"
+            >
               <ActionIcon
-                onClick={onOpenCart}
+                onClick={handleCartClick}
                 color="bamboo"
                 variant="filled"
                 size={36}
                 radius="md"
-                aria-label="Giỏ hàng"
-                hiddenFrom="sm"
+                aria-label={isCartOpen ? 'Đóng giỏ hàng' : 'Mở giỏ hàng'}
                 style={{
                   backgroundColor: '#226135',
                   boxShadow: '0 2px 6px rgba(34, 97, 53, 0.25)',
@@ -154,69 +182,78 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <IconShoppingCart size={19} />
               </ActionIcon>
-              {cartItemCount > 0 && (
-                <Badge
-                  circle
-                  size="xs"
-                  color="red"
-                  hiddenFrom="sm"
-                  style={{
-                    position: 'absolute',
-                    top: -4,
-                    right: -4,
-                    border: '2px solid white',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  {cartItemCount}
-                </Badge>
-              )}
-            </div>
+            </Indicator>
 
-            {/* Desktop Cart Button */}
-            <Button
-              onClick={onOpenCart}
-              leftSection={<IconShoppingCart size={17} />}
-              color="bamboo"
-              variant="filled"
-              size="sm"
+            {/* Desktop Cart Button with clean Indicator Badge (Never clipped) */}
+            <Indicator
+              label={cartItemCount}
+              disabled={cartItemCount === 0}
+              color="red"
+              size={20}
+              offset={4}
+              withBorder
               visibleFrom="sm"
-              style={{
-                position: 'relative',
-                fontWeight: 700,
-                boxShadow: '0 2px 8px rgba(34, 97, 53, 0.22)',
-                whiteSpace: 'nowrap',
-              }}
             >
-              <span>Giỏ Hàng</span>
-              {cartItemCount > 0 && (
-                <Badge
-                  circle
-                  size="sm"
-                  color="red"
-                  style={{
-                    position: 'absolute',
-                    top: -5,
-                    right: -5,
-                    border: '2px solid white',
-                  }}
-                >
-                  {cartItemCount}
-                </Badge>
-              )}
-            </Button>
+              <Button
+                onClick={handleCartClick}
+                leftSection={<IconShoppingCart size={17} />}
+                color="bamboo"
+                variant="filled"
+                size="sm"
+                style={{
+                  fontWeight: 700,
+                  boxShadow: '0 2px 8px rgba(34, 97, 53, 0.22)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Giỏ Hàng
+              </Button>
+            </Indicator>
 
-            {/* Mobile/Tablet menu toggle */}
+            {/* Desktop QR Standee Button */}
+            {onOpenWebsiteQr && (
+              <Tooltip label="Mã QR Quán (Cho Khách Quét Vào Web)" position="bottom" withArrow>
+                <ActionIcon
+                  onClick={onOpenWebsiteQr}
+                  variant="light"
+                  color="bamboo"
+                  size="lg"
+                  radius="md"
+                  visibleFrom="sm"
+                  aria-label="Mã QR quán"
+                >
+                  <IconQrcode size={19} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+
+            {/* Desktop Admin Management Button */}
+            <Tooltip label="Trang Quản Trị Quán (Chủ Quán / Admin)" position="bottom" withArrow>
+              <ActionIcon
+                component="a"
+                href="/admin"
+                variant="light"
+                color="bamboo"
+                size="lg"
+                radius="md"
+                visibleFrom="sm"
+                aria-label="Quản trị quán"
+              >
+                <IconSettings size={19} />
+              </ActionIcon>
+            </Tooltip>
+
+            {/* Mobile/Tablet menu toggle - Toggle open/close on repeated clicks */}
             <ActionIcon
               variant="subtle"
               color="bamboo"
-              onClick={() => setMobileMenuOpen(true)}
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
               hiddenFrom="md"
               size={36}
               radius="md"
-              aria-label="Mở menu"
+              aria-label={mobileMenuOpen ? 'Đóng menu' : 'Mở menu'}
             >
-              <IconMenu2 size={22} />
+              {mobileMenuOpen ? <IconX size={22} /> : <IconMenu2 size={22} />}
             </ActionIcon>
           </Group>
         </Group>
@@ -226,6 +263,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       <Drawer
         opened={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
+        withCloseButton
+        closeButtonProps={{ 'aria-label': 'Đóng menu' }}
         title={
           <Group gap="xs">
             <img
@@ -261,6 +300,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             </a>
           ))}
 
+          {onOpenWebsiteQr && (
+            <Button
+              variant="outline"
+              color="bamboo"
+              fullWidth
+              leftSection={<IconQrcode size={18} />}
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenWebsiteQr();
+              }}
+            >
+              Mã QR Quán (Cho Khách Quét Vào Web)
+            </Button>
+          )}
+
           <Button
             variant="light"
             color="bamboo"
@@ -271,6 +325,30 @@ export const Navbar: React.FC<NavbarProps> = ({
             }}
           >
             Xem Ảnh Menu Thực Tế Quán
+          </Button>
+
+          <Button
+            component="a"
+            href={siteConfig.facebookUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="outline"
+            color="blue"
+            fullWidth
+            leftSection={<img src="/images/facebook-logo.png" alt="FB" style={{ width: 18, height: 18, borderRadius: '50%' }} />}
+          >
+            Fanpage Facebook Quán
+          </Button>
+
+          <Button
+            component="a"
+            href="/admin"
+            variant="filled"
+            color="bamboo"
+            fullWidth
+            leftSection={<IconSettings size={18} />}
+          >
+            Trang Quản Trị Quán & Đơn Hàng
           </Button>
 
           <Divider my="xs" />

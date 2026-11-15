@@ -8,12 +8,16 @@ interface FloatingActionsProps {
   cartItemCount: number;
   cartTotalAmount: number;
   onOpenCart: () => void;
+  onToggleCart?: () => void;
+  isCartOpen?: boolean;
 }
 
 export const FloatingActions: React.FC<FloatingActionsProps> = ({
   cartItemCount,
   cartTotalAmount,
   onOpenCart,
+  onToggleCart,
+  isCartOpen = false,
 }) => {
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -28,6 +32,19 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // When cart drawer is open on mobile/desktop, hide all floating buttons so they don't cover the drawer
+  if (isCartOpen) {
+    return null;
+  }
+
+  const handleCartClick = () => {
+    if (onToggleCart) {
+      onToggleCart();
+    } else {
+      onOpenCart();
+    }
+  };
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -50,10 +67,10 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
 
   return (
     <>
-      {/* 1. MOBILE BOTTOM FLOATING CART BAR (HIGH-CONVERSION APP-LIKE EXPERIENCE) */}
+      {/* 1. MOBILE BOTTOM FLOATING CART BAR (HIGH-CONVERSION APP-LIKE EXPERIENCE) - ONLY ON MOBILE */}
       {cartItemCount > 0 && (
         <div
-          onClick={onOpenCart}
+          onClick={handleCartClick}
           className="mobile-cart-bar"
           style={{
             position: 'fixed',
@@ -64,7 +81,6 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
             backgroundColor: '#226135',
             borderRadius: '50px',
             padding: '10px 18px',
-            display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             color: '#ffffff',
@@ -113,9 +129,9 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
 
       {/* 2. FLOATING CONTACT ACTIONS (ADAPTIVE DESKTOP & MOBILE) */}
       <div
+        className={`floating-contact-actions ${cartItemCount > 0 ? 'has-cart-items' : ''}`}
         style={{
           position: 'fixed',
-          bottom: cartItemCount > 0 ? '78px' : '20px',
           right: '16px',
           zIndex: 998,
           display: 'flex',
@@ -128,7 +144,7 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
         {/* Desktop-only floating cart pill (When cart has items) */}
         {cartItemCount > 0 && (
           <Button
-            onClick={onOpenCart}
+            onClick={handleCartClick}
             size="md"
             radius="xl"
             color="bamboo"
@@ -141,7 +157,6 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
               border: '2px solid #ffffff',
               fontWeight: 700,
               padding: '0 16px',
-              animation: 'pulse-dot 2s infinite ease-in-out',
             }}
           >
             <span>Giỏ Hàng</span>

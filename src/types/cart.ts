@@ -12,11 +12,13 @@ export interface CartItem {
 }
 
 export type OrderType = 'dine-in' | 'takeaway';
+export type PaymentMethod = 'vietqr' | 'cash';
 
 export interface OrderCustomerInfo {
-  customerName: string;
-  phone: string;
-  tableNumber: string;
+  customerName?: string;
+  phone?: string;
+  tableNumber?: string;
   orderType: OrderType;
-  generalNote: string;
+  paymentMethod: PaymentMethod;
+  generalNote?: string;
 }

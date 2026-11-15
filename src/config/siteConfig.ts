@@ -37,8 +37,8 @@ export const siteConfig: SiteConfig = {
   hotline: "0365777113",
   hotlineDisplay: "0365 777 113",
   zalo: "0365777113",
-  // Facebook của chủ quán: Để trống theo yêu cầu của bạn, bạn có thể dán link facebook vào đây khi cần
-  facebookUrl: "", 
+  // Facebook chính thức của chủ quán
+  facebookUrl: "https://www.facebook.com/xuan.pham.643869", 
   openingHours: "06:00 - 22:00",
   openingDays: "Tất cả các ngày trong tuần (T2 - CN)",
   googleMapsUrl: "https://www.google.com/maps/search/?api=1&query=905+H%C3%B9ng+V%C6%B0%C6%A1ng,+Ph%C3%BA+M%E1%BB%B9,+Th%E1%BB%A7+D%E1%BA%A7u+M%E1%BB%99t,+B%C3%ACnh+D%C6%B0%C6%A1ng",

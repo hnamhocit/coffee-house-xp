@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Bất kỳ ai (khách hàng chưa đăng nhập) đều có thể xem thực đơn quán
+    // Chỉ có admin đã đăng nhập bằng Google mới được thêm, sửa, xóa món
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // 2. Khách hàng vãng lai có thể tạo đơn hàng (đặt món) và theo dõi trạng thái đơn của mình
+    // Chủ quán có thể xem toàn bộ đơn và cập nhật trạng thái đơn (pha chế, đã phục vụ, đã thu tiền)
+    match /orders/{orderId} {
+      allow read, create, update: if true;
+      allow delete: if request.auth != null;
+    }
+    
+    // Hoặc cho phép toàn quyền trong giai đoạn thử nghiệm:
+    // match /{document=**} {
+    //   allow read, write: if true;
+    // }
+  }
+}

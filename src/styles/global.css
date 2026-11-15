@@ -159,11 +159,39 @@ h1, h2, h3, h4, h5, h6 {
   padding-bottom: calc(75px + env(safe-area-inset-bottom, 0px));
 }
 
-/* Hide floating Facebook button on mobile to save vertical screen real estate */
+/* Floating action buttons styles */
+.floating-fb-btn {
+  display: flex !important;
+}
+
+/* Mobile bottom cart bar - STRICTLY HIDDEN ON DESKTOP */
+.mobile-cart-bar {
+  display: none !important;
+}
+
+.floating-contact-actions {
+  bottom: 20px;
+}
+
 @media (max-width: 767px) {
-  .floating-fb-btn {
-    display: none !important;
+  /* On mobile screens, show the bottom bar if rendered */
+  .mobile-cart-bar {
+    display: flex !important;
+    bottom: max(14px, env(safe-area-inset-bottom, 0px)) !important;
   }
+
+  /* On mobile screens, push contact icons up when cart has items */
+  .floating-contact-actions.has-cart-items {
+    bottom: calc(78px + max(14px, env(safe-area-inset-bottom, 0px))) !important;
+  }
+}
+
+/* Smooth scrolling for Cart Drawer */
+.cart-drawer-scrollable {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: thin;
 }
 
 /* Subtle pulse for open status */

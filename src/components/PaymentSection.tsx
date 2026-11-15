@@ -17,6 +17,8 @@ import {
   IconCheck,
   IconShieldCheck,
   IconHeart,
+  IconDownload,
+  IconExternalLink,
 } from '@tabler/icons-react';
 import { siteConfig } from '../config/siteConfig';
 
@@ -188,6 +190,21 @@ export const PaymentSection: React.FC = () => {
                 <Text size="xs" fw={700} c="#14281b" mt={8}>
                   Quét QR Bằng Ứng Dụng Ngân Hàng
                 </Text>
+
+                <Group gap={6} mt={8} justify="center">
+                  <Button
+                    component="a"
+                    href={qrDefaultUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    size="xs"
+                    variant="light"
+                    color="bamboo"
+                    leftSection={<IconExternalLink size={14} />}
+                  >
+                    Mở Mã QR Toàn Màn Hình
+                  </Button>
+                </Group>
               </div>
             </div>
           </SimpleGrid>

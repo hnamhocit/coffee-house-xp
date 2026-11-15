@@ -12,13 +12,25 @@ import { Footer } from './Footer';
 import { CartDrawer } from './CartDrawer';
 import { OriginalMenuModal } from './OriginalMenuModal';
 import { FloatingActions } from './FloatingActions';
+import { WebsiteQrModal } from './WebsiteQrModal';
 import type { CartItem } from '../types/cart';
-import type { MenuItem } from '../data/menuData';
+import { MENU_ITEMS, type MenuItem } from '../data/menuData';
+import { subscribeProducts } from '../services/firebaseService';
 
 export const CoffeeHouseApp: React.FC = () => {
+  const [products, setProducts] = useState<MenuItem[]>(MENU_ITEMS);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   const [originalMenuModalOpen, setOriginalMenuModalOpen] = useState(false);
+  const [websiteQrModalOpen, setWebsiteQrModalOpen] = useState(false);
+
+  // Subscribe to real-time products from Firestore (or fallback to MENU_ITEMS)
+  useEffect(() => {
+    const unsubscribe = subscribeProducts((realtimeProducts) => {
+      setProducts(realtimeProducts);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Load cart from localStorage on client mount
   useEffect(() => {
@@ -108,6 +120,10 @@ export const CoffeeHouseApp: React.FC = () => {
   const totalItemCount = cartItems.reduce((acc, curr) => acc + curr.quantity, 0);
   const totalAmount = cartItems.reduce((acc, curr) => acc + curr.totalPrice, 0);
 
+  const handleToggleCart = () => {
+    setCartDrawerOpen((prev) => !prev);
+  };
+
   return (
     <MantineProvider theme={theme} defaultColorScheme="light">
       <Notifications position="top-right" zIndex={2000} autoClose={3000} />
@@ -116,13 +132,16 @@ export const CoffeeHouseApp: React.FC = () => {
         <Navbar
           cartItemCount={totalItemCount}
           onOpenCart={() => setCartDrawerOpen(true)}
+          onToggleCart={handleToggleCart}
+          isCartOpen={cartDrawerOpen}
           onOpenOriginalMenu={() => setOriginalMenuModalOpen(true)}
+          onOpenWebsiteQr={() => setWebsiteQrModalOpen(true)}
         />
 
         {/* Main Content Sections */}
         <main style={{ flex: 1 }}>
           <Hero onOpenOriginalMenu={() => setOriginalMenuModalOpen(true)} />
-          <MenuSection onAddToCart={handleAddToCart} />
+          <MenuSection onAddToCart={handleAddToCart} items={products} />
           <AboutSection />
           <PaymentSection />
           <LocationSection />
@@ -147,11 +166,19 @@ export const CoffeeHouseApp: React.FC = () => {
           onClose={() => setOriginalMenuModalOpen(false)}
         />
 
+        {/* Website Standee QR Modal */}
+        <WebsiteQrModal
+          opened={websiteQrModalOpen}
+          onClose={() => setWebsiteQrModalOpen(false)}
+        />
+
         {/* Floating Action Buttons */}
         <FloatingActions
           cartItemCount={totalItemCount}
           cartTotalAmount={totalAmount}
           onOpenCart={() => setCartDrawerOpen(true)}
+          onToggleCart={handleToggleCart}
+          isCartOpen={cartDrawerOpen}
         />
       </div>
     </MantineProvider>

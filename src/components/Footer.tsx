@@ -24,7 +24,11 @@ import {
 import { notifications } from '@mantine/notifications';
 import { siteConfig } from '../config/siteConfig';
 
-export const Footer: React.FC = () => {
+interface FooterProps {
+  onOpenAdmin?: () => void;
+}
+
+export const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
   const handleFacebookClick = (e: React.MouseEvent) => {
     if (!siteConfig.facebookUrl || siteConfig.facebookUrl === '#' || siteConfig.facebookUrl.trim() === '') {
       e.preventDefault();
@@ -141,6 +145,19 @@ export const Footer: React.FC = () => {
             </a>
             <a href="#dia-chi" style={{ color: '#badcc3', textDecoration: 'none', fontSize: '0.88rem' }}>
               Địa Chỉ & Bản Đồ
+            </a>
+            <a
+              href="/admin"
+              style={{
+                color: '#8ec999',
+                fontSize: '0.88rem',
+                textDecoration: 'none',
+                marginTop: '6px',
+                display: 'inline-block',
+                fontWeight: 600,
+              }}
+            >
+              ⚙️ Trang Quản Trị Quán (Admin)
             </a>
           </Stack>
 

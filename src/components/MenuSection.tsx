@@ -47,11 +47,14 @@ interface MenuSectionProps {
     sugar?: string,
     note?: string
   ) => void;
+  items?: MenuItem[];
 }
 
-export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart }) => {
+export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items }) => {
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const sourceItems = items && items.length > 0 ? items : MENU_ITEMS;
 
   // Selected item modal state
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -62,7 +65,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart }) => {
 
   // Filtered and sorted items (Best Sellers prioritized first)
   const filteredItems = useMemo(() => {
-    const list = MENU_ITEMS.filter((item) => {
+    const list = sourceItems.filter((item) => {
       // Category filter
       if (selectedCategory === 'best-seller') {
         if (item.badge !== 'Best Seller' && item.badge !== 'Ưu Đãi') return false;
