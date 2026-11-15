@@ -1,0 +1,183 @@
+/* Import Google Fonts with full Vietnamese support */
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:ital,wght@0,500;0,600;0,700;0,800;1,600&display=swap');
+
+:root {
+  --color-bg-base: #fcfdfc;
+  --color-bg-subtle: #f5f8f5;
+  --color-card-bg: #ffffff;
+  --color-border: #e2ede4;
+  --color-border-hover: #b8d7be;
+  
+  /* Text colors: High-contrast, completely glare-free */
+  --color-text-title: #14281b;
+  --color-text-body: #2c3f33;
+  --color-text-muted: #536b5a;
+  
+  /* Brand Green colors */
+  --color-brand-primary: #226135;
+  --color-brand-hover: #194b28;
+  --color-brand-soft: #eff7f1;
+  --color-brand-badge: #dcf0e2;
+  
+  --font-heading: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  font-family: var(--font-body);
+  background-color: var(--color-bg-base);
+  color: var(--color-text-body);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: var(--color-bg-base);
+  color: var(--color-text-body);
+  line-height: 1.6;
+}
+
+/* Guaranteed Sticky Header */
+header.app-header {
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  width: 100%;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  color: var(--color-text-title);
+  letter-spacing: -0.02em;
+  margin-top: 0;
+}
+
+::selection {
+  background-color: #badcc3;
+  color: #13371b;
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f6f2;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #b5d5bd;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #73ab81;
+}
+
+/* Full Photo Immersive Drink Card - Responsive Design */
+.full-photo-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+  border: 1px solid rgba(226, 237, 228, 0.8);
+  box-shadow: 0 4px 14px rgba(20, 40, 27, 0.05);
+  height: 200px;
+  background-color: #1b2d20;
+}
+
+@media (min-width: 640px) {
+  .full-photo-card {
+    height: 230px;
+    border-radius: 14px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .full-photo-card {
+    height: 245px;
+  }
+}
+
+.full-photo-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px rgba(34, 97, 53, 0.15);
+}
+
+.full-photo-card:hover .card-bg-img {
+  transform: scale(1.06);
+}
+
+.card-bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.35s ease;
+}
+
+/* Category Tabs Smooth Horizontal Scroll on Mobile */
+.tabs-scrollable {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+.tabs-scrollable::-webkit-scrollbar {
+  display: none;
+}
+
+/* 2-line clamp for product titles */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Price tag style */
+.clean-price-tag {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  color: var(--color-brand-primary);
+}
+
+/* Bottom safe-area for mobile devices */
+.mobile-bottom-safe {
+  padding-bottom: calc(75px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Hide floating Facebook button on mobile to save vertical screen real estate */
+@media (max-width: 767px) {
+  .floating-fb-btn {
+    display: none !important;
+  }
+}
+
+/* Subtle pulse for open status */
+@keyframes pulse-dot {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.pulse-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  animation: pulse-dot 2s infinite ease-in-out;
+}

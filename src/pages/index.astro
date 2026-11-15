@@ -1,0 +1,125 @@
+---
+import '@mantine/core/styles.css';
+import '@mantine/notifications/styles.css';
+import '../styles/global.css';
+import { CoffeeHouseApp } from '../components/CoffeeHouseApp';
+import { siteConfig } from '../config/siteConfig';
+
+const pageTitle = "Xuân Phạm Coffee House | Vườn Tre Xanh Mát Giữa Lòng Thủ Dầu Một";
+const pageDescription = "Xuân Phạm Coffee House – Không gian vườn tre xanh mát tại 905 Hùng Vương, P. Phú Mỹ, TP. Thủ Dầu Một, Bình Dương. Chậm lại một nhịp giữa bộn bề phố thị, thưởng thức cà phê rang mộc nguyên chất, cà phê muối, trà đào, matcha latte. Giá bình dân 10k - 30k. Hotline: 0365 777 113.";
+const siteKeywords = "xuan pham coffee house, cà phê vườn tre, cà phê xuân phạm, quán cà phê thủ dầu một, cà phê phú mỹ bình dương, cà phê muối bình dương, trà đào thủ dầu một, quán cà phê đẹp bình dương, 905 hùng vương thủ dầu một";
+
+// Schema.org Structured Data
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "CafeOrCoffeeShop",
+  "name": "Xuân Phạm Coffee House",
+  "alternateName": "Cà Phê Vườn Tre Xuân Phạm",
+  "description": pageDescription,
+  "url": "https://xuanphamcoffee.vn",
+  "telephone": "+84365777113",
+  "image": [
+    "https://xuanphamcoffee.vn/images/logo.png",
+    "https://xuanphamcoffee.vn/images/bamboo-hero.jpg",
+    "https://xuanphamcoffee.vn/images/menu-photo.jpg"
+  ],
+  "logo": "https://xuanphamcoffee.vn/images/logo.png",
+  "address": {
+    "@type": "PostalAddress",
+    "streetAddress": "905 Hùng Vương",
+    "addressLocality": "Phường Phú Mỹ, Thành phố Thủ Dầu Một",
+    "addressRegion": "Bình Dương",
+    "postalCode": "820000",
+    "addressCountry": "VN"
+  },
+  "geo": {
+    "@type": "GeoCoordinates",
+    "latitude": 11.016335,
+    "longitude": 106.660920
+  },
+  "openingHoursSpecification": [
+    {
+      "@type": "OpeningHoursSpecification",
+      "dayOfWeek": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+      ],
+      "opens": "06:00",
+      "closes": "22:00"
+    }
+  ],
+  "priceRange": "10.000đ - 30.000đ",
+  "servesCuisine": "Cà phê mộc, Trà thảo mộc, Trà trái cây, Nước ép tươi, Sinh tố",
+  "paymentAccepted": "Tiền mặt, VietQR, Chuyển khoản Techcombank",
+  "currenciesAccepted": "VND",
+  "hasMenu": "#thuc-don"
+};
+---
+
+<!doctype html>
+<html lang="vi">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="generator" content={Astro.generator} />
+
+		<!-- Primary SEO Meta Tags -->
+		<title>{pageTitle}</title>
+		<meta name="title" content={pageTitle} />
+		<meta name="description" content={pageDescription} />
+		<meta name="keywords" content={siteKeywords} />
+		<meta name="author" content="Xuân Phạm - Cà Phê Vườn Tre" />
+		<meta name="robots" content="index, follow, max-image-preview:large" />
+		<meta name="theme-color" content="#226135" />
+
+		<!-- Favicons -->
+		<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+		<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+		<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+		<link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+		<!-- OpenGraph / Facebook Meta Tags -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://xuanphamcoffee.vn" />
+		<meta property="og:title" content="Cà Phê Vườn Tre Xuân Phạm | 905 Hùng Vương, Thủ Dầu Một" />
+		<meta property="og:description" content={pageDescription} />
+		<meta property="og:image" content="/images/logo.png" />
+		<meta property="og:image:width" content="1254" />
+		<meta property="og:image:height" content="1254" />
+		<meta property="og:image:alt" content="Logo Cà Phê Vườn Tre Xuân Phạm" />
+		<meta property="og:site_name" content="Cà Phê Vườn Tre Xuân Phạm" />
+		<meta property="og:locale" content="vi_VN" />
+
+		<!-- Twitter Meta Tags -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content="Cà Phê Vườn Tre Xuân Phạm | 905 Hùng Vương, Thủ Dầu Một" />
+		<meta name="twitter:description" content={pageDescription} />
+		<meta name="twitter:image" content="/images/logo.png" />
+
+		<!-- Geo / Local SEO Meta Tags (Bình Dương) -->
+		<meta name="geo.region" content="VN-57" />
+		<meta name="geo.placename" content="Thủ Dầu Một, Bình Dương" />
+		<meta name="geo.position" content="11.016335;106.660920" />
+		<meta name="ICBM" content="11.016335, 106.660920" />
+
+		<!-- Schema.org Structured Data -->
+		<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+
+		<!-- Preconnect to Google Fonts -->
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:ital,wght@0,500;0,600;0,700;0,800;1,600&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body>
+		<CoffeeHouseApp client:load />
+	</body>
+</html>
