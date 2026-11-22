@@ -23,11 +23,11 @@ Website thương hiệu và menu điện tử cho quán **Cà Phê Vườn Tre X
 5. **Thực đơn điện tử tương tác 100% chuẩn từ ảnh chụp menu:**
    - Toàn bộ đồ uống (Cà phê, Trà thảo mộc, Matcha Latte, Nước ép tươi, Sinh tố, Sữa tươi, Trà nóng, Nước ngọt, Thuốc lá/khăn lạnh) từ ảnh gốc.
    - Có popup tùy chọn: Mức đá (100%, 70%, 50%, Không đá), Mức đường (100%, 70%, 50%, Không đường), Ghi chú thêm cho nhân viên pha chế.
-   - Giỏ hàng trực tiếp, gửi đơn qua Zalo (0365 777 113) định dạng sẵn chi tiết hoặc gọi hotline.
+   - Thêm món bằng nút cộng, gửi cả giỏ một lần và theo dõi trạng thái trên website. Giỏ có ô số người và yêu cầu chung. Trình duyệt lưu tối đa 5 đơn đã hoàn tất để đặt lại.
 6. **Thanh toán VietQR Techcombank:**
    - Hiển thị thông tin STK `3657771130` - `PHAM THI THANH XUAN`.
    - Nút 1 chạm sao chép STK.
-   - Tự động sinh mã VietQR theo số tiền giỏ hàng.
+   - Hiện VietQR theo số tiền và mã đơn sau khi quán phục vụ.
 
 ---
 
@@ -68,3 +68,24 @@ bun run astro dev stop
 # Build production
 bun run build
 ```
+
+## Kiểm thử và phát hành luồng đặt món
+
+Checkout dùng Firebase Authentication (Anonymous) và Firestore trên gói Spark. Mỗi lần thử lại hoặc chỉnh một đơn chưa xác nhận vẫn dùng cùng mã yêu cầu. Khi nhà quán bắt đầu xử lý, trang quản trị đối chiếu đơn với giá trong danh mục. VietQR của khách xuất hiện khi quán đã đánh dấu phục vụ.
+
+### Chạy với dữ liệu demo
+
+```sh
+firebase emulators:start --project demo-coffee-house-xp --only auth,firestore
+PUBLIC_FIREBASE_EMULATORS=true bun run astro dev --background
+```
+
+Thêm ít nhất một món vào collection `products` trong Emulator UI để thử checkout. Món cần có `name`, `category`, `price` dạng số nguyên VND và `image`. Thử đặt bằng hai phiên trình duyệt để kiểm tra mỗi phiên chỉ đọc được đơn của mình. Dùng trang quản trị đánh dấu đơn đang chuẩn bị và đã phục vụ để kiểm tra VietQR, rồi xác nhận thu tiền.
+
+### Đưa lên production
+
+1. Bật **Anonymous** trong **Authentication → Sign-in method** của project `coffee-house-xp`. Giữ Google sign-in cho quản trị.
+2. Triển khai rules mới bằng `firebase deploy --only firestore:rules --project coffee-house-xp`, sau đó phát hành cả trang khách lẫn trang quản trị. Tải lại các tab quản trị đang mở để nhận luồng kiểm tra giá mới.
+3. Thử một đơn từ phiên trình duyệt mới và xác nhận quán nhận đơn trước khi cho khách dùng.
+
+Đơn cũ thiếu `ownerUid` vẫn hiện cho quản trị. Với đơn cũ còn mở, nhân viên có thể đối chiếu qua hotline. Nếu `accounts:signUp` trả 400 với mã `OPERATION_NOT_ALLOWED`, kiểm tra lại Anonymous sign-in của project.

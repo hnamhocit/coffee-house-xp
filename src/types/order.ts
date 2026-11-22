@@ -1,4 +1,4 @@
-export type OrderStatus = 'pending' | 'served' | 'completed' | 'cancelled';
+export type OrderStatus = 'pending' | 'preparing' | 'served' | 'completed' | 'cancelled';
 
 export interface OrderItemDetail {
   id: string;
@@ -19,6 +19,8 @@ export interface CustomerOrder {
   paymentMethod: 'vietqr' | 'cash';
   status: OrderStatus;
   note?: string;
+  partySize?: number;
+  priceVerified?: boolean;
   customerPaid?: boolean;
   createdAt: number;
   updatedAt?: number;

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import type { OrderItemDetail } from '../types/order';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { theme } from '../theme/mantineTheme';
@@ -10,90 +11,84 @@ import { PaymentSection } from './PaymentSection';
 import { LocationSection } from './LocationSection';
 import { Footer } from './Footer';
 import { CartDrawer } from './CartDrawer';
-import { OriginalMenuModal } from './OriginalMenuModal';
+import { scrollToOrderStatus } from './OrderStatusPanel';
 import { FloatingActions } from './FloatingActions';
-import { WebsiteQrModal } from './WebsiteQrModal';
 import type { CartItem } from '../types/cart';
 import { MENU_ITEMS, type MenuItem } from '../data/menuData';
 import { subscribeProducts } from '../services/firebaseService';
 
+const OriginalMenuModal = lazy(() => import('./OriginalMenuModal').then((module) => ({ default: module.OriginalMenuModal })));
+const WebsiteQrModal = lazy(() => import('./WebsiteQrModal').then((module) => ({ default: module.WebsiteQrModal })));
+
+type CartSelection = Pick<CartItem, 'item' | 'quantity' | 'ice' | 'sugar' | 'note'>;
+
+function mergeCartItems(previous: CartItem[], selections: CartSelection[]): CartItem[] {
+  const cart = new Map(previous.map((line) => [line.cartId, line]));
+  for (const selection of selections) {
+    const { item, ice, sugar, note } = selection;
+    const cartId = `${item.id}_${ice || 'default'}_${sugar || 'default'}_${note || ''}`;
+    const quantity = Math.min(99, (cart.get(cartId)?.quantity ?? 0) + selection.quantity);
+    cart.set(cartId, { ...selection, cartId, quantity, unitPrice: item.price, totalPrice: item.price * quantity });
+  }
+  return [...cart.values()];
+}
+
 export const CoffeeHouseApp: React.FC = () => {
   const [products, setProducts] = useState<MenuItem[]>(MENU_ITEMS);
-  const [productsLoading, setProductsLoading] = useState(true);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartRestored, setCartRestored] = useState(false);
+  const [trackingOrder, setTrackingOrder] = useState(false);
+  const [showOrderRequested, setShowOrderRequested] = useState(false);
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   const [originalMenuModalOpen, setOriginalMenuModalOpen] = useState(false);
   const [websiteQrModalOpen, setWebsiteQrModalOpen] = useState(false);
 
-  // Subscribe to real-time products from Firestore (or fallback to MENU_ITEMS)
-  useEffect(() => {
-    const unsubscribe = subscribeProducts((realtimeProducts) => {
-      setProducts(realtimeProducts);
-      setProductsLoading(false);
-    });
-    const timer = setTimeout(() => setProductsLoading(false), 600);
-    return () => {
-      unsubscribe();
-      clearTimeout(timer);
-    };
-  }, []);
+  useEffect(() => subscribeProducts(setProducts), []);
 
   // Load cart from localStorage on client mount
   useEffect(() => {
     try {
       const saved = localStorage.getItem('xuan_pham_coffee_cart');
       if (saved) {
-        setCartItems(JSON.parse(saved));
+        const parsed: unknown = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setCartItems(parsed.filter((line) => line && typeof line.cartId === 'string'
+            && typeof line.item?.id === 'string' && typeof line.item.name === 'string'
+            && Number.isSafeInteger(line.quantity) && line.quantity > 0
+            && Number.isSafeInteger(line.unitPrice) && line.unitPrice >= 0)
+            .map((line) => ({ ...line, totalPrice: line.unitPrice * line.quantity })));
+        }
       }
     } catch (e) {
       console.error('Error loading cart:', e);
+    } finally {
+      setCartRestored(true);
     }
   }, []);
 
   // Save cart to localStorage on change
   useEffect(() => {
+    if (!cartRestored) return;
     try {
       localStorage.setItem('xuan_pham_coffee_cart', JSON.stringify(cartItems));
     } catch (e) {
       console.error('Error saving cart:', e);
     }
-  }, [cartItems]);
+  }, [cartItems, cartRestored]);
 
-  const handleAddToCart = (
-    item: MenuItem,
-    quantity: number,
-    ice?: string,
-    sugar?: string,
-    note?: string
-  ) => {
-    setCartItems((prev) => {
-      // Create a unique key based on item id and customizations
-      const optionsKey = `${item.id}_${ice || 'default'}_${sugar || 'default'}_${note || ''}`;
-      const existingIndex = prev.findIndex((c) => c.cartId === optionsKey);
+  const handleAddToCart = (item: MenuItem, quantity: number, ice?: string, sugar?: string, note?: string) => {
+    setCartItems((previous) => mergeCartItems(previous, [{ item, quantity, ice, sugar, note }]));
+  };
 
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        const newQty = updated[existingIndex].quantity + quantity;
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          quantity: newQty,
-          totalPrice: newQty * item.price,
-        };
-        return updated;
-      } else {
-        const newItem: CartItem = {
-          cartId: optionsKey,
-          item,
-          quantity,
-          ice,
-          sugar,
-          note,
-          unitPrice: item.price,
-          totalPrice: item.price * quantity,
-        };
-        return [...prev, newItem];
-      }
+  const handleReorder = (lines: OrderItemDetail[]) => {
+    const catalog = new Map(products.map((item) => [item.id, item]));
+    const available = lines.flatMap(({ id, quantity, ice, sugar, note }) => {
+      const item = catalog.get(id);
+      return item ? [{ item, quantity, ice: item.allowCustomization ? ice : undefined, sugar: item.allowCustomization ? sugar : undefined, note }] : [];
     });
+
+    if (available.length) setCartItems((previous) => mergeCartItems(previous, available));
+    return { added: available.length, unavailable: lines.length - available.length };
   };
 
   const handleUpdateQuantity = (cartId: string, delta: number) => {
@@ -101,7 +96,7 @@ export const CoffeeHouseApp: React.FC = () => {
       return prev
         .map((item) => {
           if (item.cartId === cartId) {
-            const newQty = item.quantity + delta;
+            const newQty = Math.min(99, item.quantity + delta);
             if (newQty <= 0) return null;
             return {
               ...item,
@@ -119,6 +114,15 @@ export const CoffeeHouseApp: React.FC = () => {
     setCartItems((prev) => prev.filter((i) => i.cartId !== cartId));
   };
 
+  const handleRefreshCart = () => {
+    const menu = new Map(products.map((product) => [product.id, product]));
+    setCartItems((previous) => previous.flatMap((line) => {
+      const item = menu.get(line.item.id);
+      if (!item) return [];
+      return [{ ...line, item, unitPrice: item.price, totalPrice: item.price * line.quantity }];
+    }));
+  };
+
   const handleClearCart = () => {
     setCartItems([]);
   };
@@ -130,14 +134,32 @@ export const CoffeeHouseApp: React.FC = () => {
     setCartDrawerOpen((prev) => !prev);
   };
 
+  const openCart = () => setCartDrawerOpen(true);
+
+  const showOrder = useCallback(() => {
+    setCartDrawerOpen(false);
+    setShowOrderRequested(true);
+  }, []);
+
+  useEffect(() => {
+    if (!showOrderRequested || !trackingOrder || cartDrawerOpen) return;
+    const frame = requestAnimationFrame(() => {
+      scrollToOrderStatus();
+      setShowOrderRequested(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [showOrderRequested, trackingOrder, cartDrawerOpen]);
+
   return (
     <MantineProvider theme={theme} defaultColorScheme="light">
-      <Notifications position="top-right" zIndex={2000} autoClose={3000} />
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Notifications position="top-right" zIndex={2600} autoClose={3000} />
+      <div className={trackingOrder || totalItemCount > 0 ? 'mobile-bottom-safe' : undefined} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         {/* Sticky Header */}
         <Navbar
+          trackingOrder={trackingOrder}
+          onShowOrder={showOrder}
           cartItemCount={totalItemCount}
-          onOpenCart={() => setCartDrawerOpen(true)}
+          onOpenCart={openCart}
           onToggleCart={handleToggleCart}
           isCartOpen={cartDrawerOpen}
           onOpenOriginalMenu={() => setOriginalMenuModalOpen(true)}
@@ -147,7 +169,20 @@ export const CoffeeHouseApp: React.FC = () => {
         {/* Main Content Sections */}
         <main style={{ flex: 1 }}>
           <Hero onOpenOriginalMenu={() => setOriginalMenuModalOpen(true)} />
-          <MenuSection onAddToCart={handleAddToCart} items={products} loading={productsLoading} />
+          <CartDrawer
+            opened={cartDrawerOpen}
+            onClose={() => setCartDrawerOpen(false)}
+            items={cartItems}
+            onUpdateQuantity={handleUpdateQuantity}
+            onRemoveItem={handleRemoveItem}
+            onClearCart={handleClearCart}
+            onRefreshCart={handleRefreshCart}
+            onReorder={handleReorder}
+            onTrackingChange={setTrackingOrder}
+            onShowOrder={showOrder}
+            onOpenCart={openCart}
+          />
+          <MenuSection onAddToCart={handleAddToCart} items={products} interactive={cartRestored} />
           <AboutSection />
           <PaymentSection />
           <LocationSection />
@@ -156,34 +191,18 @@ export const CoffeeHouseApp: React.FC = () => {
         {/* Footer */}
         <Footer />
 
-        {/* Cart Drawer */}
-        <CartDrawer
-          opened={cartDrawerOpen}
-          onClose={() => setCartDrawerOpen(false)}
-          items={cartItems}
-          onUpdateQuantity={handleUpdateQuantity}
-          onRemoveItem={handleRemoveItem}
-          onClearCart={handleClearCart}
-        />
-
-        {/* Original Printed Menu Modal */}
-        <OriginalMenuModal
-          opened={originalMenuModalOpen}
-          onClose={() => setOriginalMenuModalOpen(false)}
-        />
-
-        {/* Website Standee QR Modal */}
-        <WebsiteQrModal
-          opened={websiteQrModalOpen}
-          onClose={() => setWebsiteQrModalOpen(false)}
-        />
+        <Suspense fallback={null}>
+          {originalMenuModalOpen && <OriginalMenuModal opened onClose={() => setOriginalMenuModalOpen(false)} />}
+          {websiteQrModalOpen && <WebsiteQrModal opened onClose={() => setWebsiteQrModalOpen(false)} />}
+        </Suspense>
 
         {/* Floating Action Buttons */}
         <FloatingActions
+          trackingOrder={trackingOrder && totalItemCount === 0}
           cartItemCount={totalItemCount}
           cartTotalAmount={totalAmount}
-          onOpenCart={() => setCartDrawerOpen(true)}
-          onToggleCart={handleToggleCart}
+          onOpenCart={openCart}
+          onToggleCart={trackingOrder && totalItemCount === 0 ? showOrder : handleToggleCart}
           isCartOpen={cartDrawerOpen}
         />
       </div>

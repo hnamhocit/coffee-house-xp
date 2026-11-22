@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import {
   IconShoppingCart,
+  IconReceipt,
   IconMenu2,
   IconX,
   IconPlant,
@@ -24,6 +25,8 @@ import { siteConfig } from '../config/siteConfig';
 
 interface NavbarProps {
   cartItemCount: number;
+  trackingOrder: boolean;
+  onShowOrder: () => void;
   onOpenCart?: () => void;
   onToggleCart: () => void;
   isCartOpen?: boolean;
@@ -34,6 +37,8 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({
   cartItemCount,
+  trackingOrder,
+  onShowOrder,
   onOpenCart,
   onToggleCart,
   isCartOpen = false,
@@ -91,7 +96,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             }}
           >
             <img
-              src="/images/logo.png"
+              src="/images/logo.webp"
               alt="Logo Cà Phê Vườn Tre Xuân Phạm"
               style={{
                 width: 38,
@@ -118,7 +123,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   overflow: 'hidden',
                 }}
               >
-                Xuân Phạm <span style={{ color: '#226135', fontWeight: 700 }}>Coffee House</span>
+                Xuân Phạm
               </Text>
               <Text size="11px" c="#536b5a" fw={500} style={{ whiteSpace: 'nowrap' }}>
                 905 Hùng Vương, Phú Mỹ
@@ -158,7 +163,13 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action: Cart (Adaptive Mobile/Desktop) & Menu toggle */}
           <Group gap="xs" wrap="nowrap" align="center" style={{ flexShrink: 0 }}>
-            {/* Mobile Cart ActionIcon with clean Indicator Badge (Never clipped) */}
+            {trackingOrder && (
+              <Tooltip label="Theo dõi đơn">
+                <ActionIcon aria-label="Theo dõi đơn" variant="light" size={36} onClick={onShowOrder}>
+                  <IconReceipt size={19} />
+                </ActionIcon>
+              </Tooltip>
+            )}
             <Indicator
               label={cartItemCount}
               disabled={cartItemCount === 0}
@@ -206,13 +217,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                   whiteSpace: 'nowrap',
                 }}
               >
-                Giỏ Hàng
+                Giỏ hàng
               </Button>
             </Indicator>
 
             {/* Desktop QR Standee Button */}
             {onOpenWebsiteQr && (
-              <Tooltip label="Mã QR Quán (Cho Khách Quét Vào Web)" position="bottom" withArrow>
+              <Tooltip label="QR thực đơn" position="bottom" withArrow>
                 <ActionIcon
                   onClick={onOpenWebsiteQr}
                   variant="light"
@@ -268,12 +279,12 @@ export const Navbar: React.FC<NavbarProps> = ({
         title={
           <Group gap="xs">
             <img
-              src="/images/logo.png"
+              src="/images/logo.webp"
               alt="Logo"
               style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }}
             />
             <Text fw={700} c="#14281b">
-              Xuân Phạm Coffee House
+              Xuân Phạm
             </Text>
           </Group>
         }
@@ -311,7 +322,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onOpenWebsiteQr();
               }}
             >
-              Mã QR Quán (Cho Khách Quét Vào Web)
+              QR thực đơn
             </Button>
           )}
 

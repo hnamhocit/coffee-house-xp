@@ -2,14 +2,22 @@ import {
   collection,
   doc,
   addDoc,
-  setDoc,
   updateDoc,
   deleteDoc,
-  getDocs,
   onSnapshot,
+  serverTimestamp,
+  runTransaction,
+  writeBatch,
+  query,
+  where,
+  limit,
+  orderBy,
+  startAfter,
+  getDocsFromServer,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import QRCode from "qrcode";
-import { db } from "../lib/firebase";
+import { customerDb, db } from "../lib/firebase";
+import { priceOrderItems } from "./orderPricing";
 import type { MenuItem } from "../data/menuData";
 import { MENU_ITEMS } from "../data/menuData";
 import type { CustomerOrder, OrderItemDetail, OrderStatus } from "../types/order";
@@ -43,36 +51,12 @@ export const sanitizeFirestoreData = <T>(data: T): T => {
    PRODUCTS CRUD SERVICES
    ======================================================== */
 
-export const seedProductsIfEmpty = async (): Promise<boolean> => {
-  try {
-    const snapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
-    if (snapshot.empty) {
-      console.log("Khởi tạo 47 món ban đầu lên Firestore...");
-      const batchPromises = MENU_ITEMS.map((item) => {
-        const docRef = doc(db, PRODUCTS_COLLECTION, item.id);
-        return setDoc(docRef, item);
-      });
-      await Promise.all(batchPromises);
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.warn("Lỗi khi kiểm tra/khởi tạo sản phẩm Firestore (có thể do AdBlock/Brave Shield):", error);
-    return false;
-  }
-};
-
 export const resetProductsToDefault = async (): Promise<void> => {
-  try {
-    const batchPromises = MENU_ITEMS.map((item) => {
-      const docRef = doc(db, PRODUCTS_COLLECTION, item.id);
-      return setDoc(docRef, item);
-    });
-    await Promise.all(batchPromises);
-  } catch (error) {
-    console.error("Lỗi khi đặt lại thực đơn mặc định:", error);
-    throw error;
+  const batch = writeBatch(db);
+  for (const item of MENU_ITEMS) {
+    batch.set(doc(db, PRODUCTS_COLLECTION, item.id), item);
   }
+  await batch.commit();
 };
 
 export const subscribeProducts = (
@@ -82,27 +66,24 @@ export const subscribeProducts = (
     const colRef = collection(db, PRODUCTS_COLLECTION);
     return onSnapshot(
       colRef,
-      async (snapshot) => {
+      { includeMetadataChanges: true },
+      (snapshot) => {
         try {
-          if (snapshot.empty) {
-            await seedProductsIfEmpty();
-            callback(MENU_ITEMS);
-          } else {
-            const products: MenuItem[] = [];
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data();
-              products.push({
-                id: docSnap.id,
-                name: data.name || "",
-                category: data.category || "coffee",
-                price: Number(data.price) || 0,
-                image: data.image || "/images/drinks/cf-muoi.jpg",
-                badge: data.badge || undefined,
-                allowCustomization: data.allowCustomization !== false,
-              });
+          if (snapshot.empty && snapshot.metadata.fromCache) return;
+          const products: MenuItem[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            products.push({
+              id: docSnap.id,
+              name: data.name || "",
+              category: data.category || "coffee",
+              price: Number(data.price) || 0,
+              image: data.image || "/images/drinks/cf-muoi.jpg",
+              badge: data.badge || undefined,
+              allowCustomization: data.allowCustomization !== false,
             });
-            callback(products);
-          }
+          });
+          callback(products);
         } catch (innerErr) {
           console.warn("Lỗi xử lý snapshot Firestore, dùng menu mặc định:", innerErr);
           callback(MENU_ITEMS);
@@ -216,37 +197,32 @@ export const createCustomerOrder = async (orderData: {
  */
 export const subscribeSingleOrder = (
   orderId: string,
-  callback: (order: CustomerOrder | null) => void
+  callback: (order: CustomerOrder | null, fromCache: boolean) => void,
+  onError: () => void
 ): (() => void) => {
   try {
-    const docRef = doc(db, ORDERS_COLLECTION, orderId);
+    const docRef = doc(customerDb, ORDERS_COLLECTION, orderId);
     return onSnapshot(
       docRef,
+      { includeMetadataChanges: true },
       (docSnap) => {
         if (docSnap.exists()) {
-          const data = docSnap.data();
-          callback({
-            id: docSnap.id,
-            orderCode: data.orderCode || `XP-${docSnap.id.slice(0, 4)}`,
-            items: data.items || [],
-            totalAmount: Number(data.totalAmount) || 0,
-            paymentMethod: data.paymentMethod || "vietqr",
-            status: data.status || "pending",
-            note: data.note || "",
-            customerPaid: !!data.customerPaid,
-            createdAt: Number(data.createdAt) || Date.now(),
-            updatedAt: Number(data.updatedAt) || Date.now(),
-          });
+          callback(decodeOrder(docSnap), docSnap.metadata.fromCache);
+          if (docSnap.metadata.fromCache) onError();
+        } else if (!docSnap.metadata.fromCache) {
+          callback(null, false);
         } else {
-          callback(null);
+          onError();
         }
       },
       (error) => {
         console.warn("Lỗi lắng nghe cập nhật đơn hàng:", error);
+        onError();
       }
     );
   } catch (err) {
     console.warn("Không thể đăng ký listener đơn hàng đơn lẻ:", err);
+    onError();
     return () => {};
   }
 };
@@ -256,10 +232,15 @@ export const subscribeSingleOrder = (
  */
 export const markOrderCustomerPaid = async (orderId: string): Promise<void> => {
   try {
-    const docRef = doc(db, ORDERS_COLLECTION, orderId);
-    await updateDoc(docRef, {
-      customerPaid: true,
-      updatedAt: Date.now(),
+    const docRef = doc(customerDb, ORDERS_COLLECTION, orderId);
+    await runTransaction(customerDb, async (transaction) => {
+      const order = await transaction.get(docRef);
+      if (!order.exists() || order.get("status") !== "served") {
+        throw new Error("Đơn hàng chưa ở bước thanh toán.");
+      }
+      if (!order.get("customerPaid")) {
+        transaction.update(docRef, { customerPaid: true, updatedAt: serverTimestamp() });
+      }
     });
   } catch (error) {
     console.error("Lỗi cập nhật khách đã trả tiền:", error);
@@ -267,140 +248,118 @@ export const markOrderCustomerPaid = async (orderId: string): Promise<void> => {
   }
 };
 
-/**
- * Đọc trực tiếp danh sách đơn hàng từ Firestore (phương thức GET/POST qua getDocs)
- */
-export const fetchCustomerOrders = async (): Promise<CustomerOrder[]> => {
-  try {
-    const colRef = collection(db, ORDERS_COLLECTION);
-    const snapshot = await getDocs(colRef);
-    const orders: CustomerOrder[] = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      orders.push({
-        id: docSnap.id,
-        orderCode: data.orderCode || `XP-${docSnap.id.slice(0, 4)}`,
-        items: data.items || [],
-        totalAmount: Number(data.totalAmount) || 0,
-        paymentMethod: data.paymentMethod || "vietqr",
-        status: data.status || "pending",
-        note: data.note || "",
-        customerPaid: !!data.customerPaid,
-        createdAt: Number(data.createdAt) || Date.now(),
-        updatedAt: Number(data.updatedAt) || Date.now(),
-      });
-    });
-    orders.sort((a, b) => b.createdAt - a.createdAt);
-    return orders;
-  } catch (err) {
-    console.warn("Lỗi fetchCustomerOrders:", err);
-    return [];
-  }
-};
+function decodeOrder(snapshot: QueryDocumentSnapshot): CustomerOrder {
+  const data = snapshot.data();
+  return {
+    id: snapshot.id,
+    orderCode: data.orderCode || `XP-${snapshot.id.slice(0, 4)}`,
+    items: Array.isArray(data.items) ? data.items.flatMap((item) => {
+      if (!item || typeof item.id !== "string" || typeof item.name !== "string" || !Number.isSafeInteger(item.quantity)) return [];
+      return [{
+        id: item.id, name: item.name, quantity: item.quantity,
+        price: Number.isSafeInteger(item.price) ? item.price : 0,
+        totalPrice: Number.isSafeInteger(item.totalPrice) ? item.totalPrice : 0,
+        ice: typeof item.ice === "string" ? item.ice : "",
+        sugar: typeof item.sugar === "string" ? item.sugar : "",
+        note: typeof item.note === "string" ? item.note : "",
+      }];
+    }) : [],
+    totalAmount: Number(data.totalAmount) || 0,
+    paymentMethod: data.paymentMethod || "vietqr",
+    status: data.status || "pending",
+    note: data.note || "",
+    partySize: Number.isSafeInteger(data.partySize) && data.partySize > 0 ? data.partySize : undefined,
+    priceVerified: data.priceVerified !== false,
+    customerPaid: Boolean(data.customerPaid),
+    createdAt: Number(data.createdAt) || data.createdAt?.toMillis?.() || Date.now(),
+    updatedAt: Number(data.updatedAt) || data.updatedAt?.toMillis?.(),
+  };
+}
 
-/**
- * Lắng nghe toàn bộ danh sách đơn hàng cho Admin Dashboard (Real-time onSnapshot + Heartbeat polling dự phòng)
- */
-export const subscribeCustomerOrders = (
-  callback: (orders: CustomerOrder[]) => void
-): (() => void) => {
-  let isCancelled = false;
+export type OrderHistoryCursor = QueryDocumentSnapshot;
+const HISTORY_PAGE_SIZE = 50;
 
-  // 1. Tải tức thì lần đầu tiên bằng getDocs (Không để màn hình chờ WebChannel stream)
-  fetchCustomerOrders().then((initialOrders) => {
-    if (!isCancelled && initialOrders.length > 0) {
-      callback(initialOrders);
-    }
-  });
+export async function fetchOrderHistory(
+  range: { from?: number; to?: number },
+  cursor?: OrderHistoryCursor,
+) {
+  const history = query(
+    collection(db, ORDERS_COLLECTION),
+    ...(range.from === undefined ? [] : [where("createdAt", ">=", range.from)]),
+    ...(range.to === undefined ? [] : [where("createdAt", "<", range.to)]),
+    orderBy("createdAt", "desc"),
+    ...(cursor ? [startAfter(cursor)] : []),
+    limit(HISTORY_PAGE_SIZE + 1),
+  );
+  const snapshot = await getDocsFromServer(history);
+  const page = snapshot.docs.slice(0, HISTORY_PAGE_SIZE);
+  return {
+    orders: page.map(decodeOrder).filter(({ status }) => status === "completed" || status === "cancelled"),
+    cursor: snapshot.docs.length > HISTORY_PAGE_SIZE ? page.at(-1) : undefined,
+  };
+}
 
-  // 2. Đăng ký Real-time onSnapshot
-  let unsubscribeSnapshot = () => {};
-  try {
-    const colRef = collection(db, ORDERS_COLLECTION);
-    unsubscribeSnapshot = onSnapshot(
-      colRef,
-      { includeMetadataChanges: false },
-      (snapshot) => {
-        if (isCancelled) return;
-        try {
-          const orders: CustomerOrder[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            orders.push({
-              id: docSnap.id,
-              orderCode: data.orderCode || `XP-${docSnap.id.slice(0, 4)}`,
-              items: data.items || [],
-              totalAmount: Number(data.totalAmount) || 0,
-              paymentMethod: data.paymentMethod || "vietqr",
-              status: data.status || "pending",
-              note: data.note || "",
-              customerPaid: !!data.customerPaid,
-              createdAt: Number(data.createdAt) || Date.now(),
-              updatedAt: Number(data.updatedAt) || Date.now(),
-            });
-          });
-          // Mới nhất lên đầu
-          orders.sort((a, b) => b.createdAt - a.createdAt);
-          callback(orders);
-        } catch (innerErr) {
-          console.warn("Lỗi xử lý snapshot orders:", innerErr);
-        }
-      },
-      (error) => {
-        console.warn("Firestore snapshot bị gián đoạn (Brave Shield hoặc mạng):", error);
-        // Không xóa sạch dữ liệu đơn bằng mảng rỗng! Tự động fallback sang getDocs
-        fetchCustomerOrders().then((fallbackOrders) => {
-          if (!isCancelled && fallbackOrders.length > 0) {
-            callback(fallbackOrders);
-          }
-        });
-      }
-    );
-  } catch (outerErr) {
-    console.warn("Không thể mở Firestore onSnapshot:", outerErr);
-  }
+export function subscribeCustomerOrders(
+  callback: (orders: CustomerOrder[]) => void,
+  onUnavailable: (unavailable: boolean) => void,
+): () => void {
+  const activeOrders = query(collection(db, ORDERS_COLLECTION), where("status", "in", ["pending", "preparing", "served"]));
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
-  // 3. Heartbeat polling mỗi 4 giây (Bảo đảm 100% cập nhật kể cả khi trình duyệt chặn WebChannel)
-  const pollInterval = setInterval(async () => {
-    if (isCancelled) return;
+  const poll = async () => {
     try {
-      const polledOrders = await fetchCustomerOrders();
-      if (!isCancelled && polledOrders.length > 0) {
-        callback(polledOrders);
+      const snapshot = await getDocsFromServer(activeOrders);
+      if (!stopped) {
+        callback(snapshot.docs.map(decodeOrder));
+        onUnavailable(false);
       }
     } catch {
-      // Bỏ qua lỗi polling ngầm
+      if (!stopped) onUnavailable(true);
+    } finally {
+      if (!stopped) timer = setTimeout(poll, 10000);
     }
-  }, 4000);
+  };
+
+  const unsubscribe = onSnapshot(activeOrders, { includeMetadataChanges: true }, (snapshot) => {
+    onUnavailable(snapshot.metadata.fromCache);
+    if (!snapshot.metadata.fromCache) callback(snapshot.docs.map(decodeOrder));
+  }, () => {
+    onUnavailable(true);
+    void poll();
+  });
 
   return () => {
-    isCancelled = true;
-    unsubscribeSnapshot();
-    clearInterval(pollInterval);
+    stopped = true;
+    unsubscribe();
+    clearTimeout(timer);
   };
+}
+
+const nextOrderStatuses: Record<OrderStatus, readonly OrderStatus[]> = {
+  pending: ["preparing", "served", "completed", "cancelled"],
+  preparing: ["served", "completed", "cancelled"],
+  served: ["completed", "cancelled"],
+  completed: [],
+  cancelled: [],
 };
 
-/**
- * Cập nhật trạng thái đơn hàng:
- * - 'pending' ➔ 'served': Chủ quán bấm "Đã phục vụ nước" (Mở chỗ cho khách quét QR thanh toán)
- * - 'served' ➔ 'completed': Chủ quán bấm "Xác nhận đã thu tiền" (Đơn hoàn thành & ghi nhận hóa đơn)
- * - 'cancelled': Hủy đơn
- */
-export const updateOrderStatus = async (
-  orderId: string,
-  status: OrderStatus
-): Promise<void> => {
-  try {
-    const docRef = doc(db, ORDERS_COLLECTION, orderId);
-    await updateDoc(docRef, {
-      status,
-      updatedAt: Date.now(),
-    });
-  } catch (error) {
-    console.error("Lỗi cập nhật trạng thái đơn:", error);
-    throw error;
-  }
-};
+export async function updateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
+  const docRef = doc(db, ORDERS_COLLECTION, orderId);
+  await runTransaction(db, async (transaction) => {
+    const order = await transaction.get(docRef);
+    if (!order.exists()) throw new Error("Đơn này không còn trong danh sách.");
+    const current = (order.get("status") || "pending") as OrderStatus;
+    if (current === status) return;
+    if (!nextOrderStatuses[current]?.includes(status)) {
+      throw new Error("Trạng thái đơn đã thay đổi. Hãy tải lại trước khi xử lý.");
+    }
+    const verified = status !== "cancelled" && order.get("priceVerified") === false
+      ? { ...await priceOrderItems(db, transaction, order.get("items")), priceVerified: true }
+      : {};
+    transaction.update(docRef, { ...verified, status, updatedAt: serverTimestamp() });
+  });
+}
 
 /**
  * Xóa một đơn hàng
@@ -426,6 +385,7 @@ export const generateWebsiteQr = async (
   url: string = OFFICIAL_WEBSITE_URL
 ): Promise<string> => {
   try {
+    const { default: QRCode } = await import("qrcode");
     return await QRCode.toDataURL(url, {
       width: 450,
       margin: 2,

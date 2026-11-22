@@ -17,10 +17,8 @@ import {
   Textarea,
   Box,
   Divider,
-  Skeleton,
 } from '@mantine/core';
 import {
-  IconSearch,
   IconPlus,
   IconMinus,
   IconShoppingCartPlus,
@@ -28,8 +26,6 @@ import {
   IconSparkles,
   IconCheck,
   IconX,
-  IconBolt,
-  IconBrandWhatsapp,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import {
@@ -38,7 +34,6 @@ import {
   type MenuItem,
   type MenuCategory,
 } from '../data/menuData';
-import { siteConfig } from '../config/siteConfig';
 import { fuzzyMatchVietnamese, getSearchRelevanceScore } from '../utils/vietnameseSearch';
 
 interface MenuSectionProps {
@@ -50,14 +45,14 @@ interface MenuSectionProps {
     note?: string
   ) => void;
   items?: MenuItem[];
-  loading?: boolean;
+  interactive: boolean;
 }
 
-export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, loading = false }) => {
+export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, interactive }) => {
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const sourceItems = items && items.length > 0 ? items : MENU_ITEMS;
+  const sourceItems = items ?? MENU_ITEMS;
 
   // Selected item modal state
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -137,36 +132,6 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
     setSelectedItem(null);
   };
 
-  // Buy now (Direct 1-tap Zalo order)
-  const handleBuyNowZalo = () => {
-    if (!selectedItem) return;
-
-    const totalPrice = (selectedItem.price * customQuantity).toLocaleString('vi-VN');
-    let msg = `🎋 [ĐẶT MÓN NHANH - XUÂN PHẠM COFFEE]\n`;
-    msg += `• Món: ${customQuantity}x ${selectedItem.name} (${totalPrice} đ)\n`;
-    if (selectedItem.allowCustomization) {
-      msg += `• Mức đá: ${selectedIce}\n`;
-      msg += `• Mức ngọt: ${selectedSugar}\n`;
-    }
-    if (customNote.trim()) {
-      msg += `• Ghi chú: ${customNote.trim()}\n`;
-    }
-    msg += `• Tổng tiền: ${totalPrice} đ\n`;
-    msg += `Quý quán cho mình đặt món này nhé!`;
-
-    navigator.clipboard.writeText(msg);
-
-    notifications.show({
-      title: 'Đang mở Zalo của quán!',
-      message: `Đã sao chép nội dung đơn: ${customQuantity}x ${selectedItem.name}. Bạn chỉ cần dán tin nhắn gửi quán.`,
-      color: 'bamboo',
-      autoClose: 4000,
-    });
-
-    window.open(`https://zalo.me/${siteConfig.zalo}`, '_blank');
-    setSelectedItem(null);
-  };
-
   const formatPrice = (amount: number) => {
     return amount.toLocaleString('vi-VN') + ' đ';
   };
@@ -185,10 +150,12 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
         {/* Search Bar & Category Navigation */}
         <div style={{ marginBottom: '24px' }}>
           <TextInput
-            placeholder="🔍 Tìm món nhanh: cà phê muối, matcha, trà đào, sinh tố bơ, nước ép cam..."
+            aria-label="Tìm món"
+            disabled={!interactive}
+            placeholder="Tìm món, ví dụ cà phê muối"
             rightSection={
               searchQuery ? (
-                <ActionIcon size="sm" variant="subtle" color="gray" onClick={() => setSearchQuery('')}>
+                <ActionIcon size="sm" variant="subtle" color="gray" aria-label="Xóa nội dung tìm kiếm" onClick={() => setSearchQuery('')}>
                   <IconX size={14} />
                 </ActionIcon>
               ) : null
@@ -223,6 +190,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                 <Tabs.Tab
                   key={cat.id}
                   value={cat.id}
+                  disabled={!interactive}
                   style={{
                     fontWeight: 700,
                     fontSize: 'clamp(0.8rem, 2.5vw, 0.88rem)',
@@ -241,43 +209,15 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
 
         {/* UNIFIED MENU GRID (ALL ITEMS WITH BEST SELLERS PRIORITIZED FIRST) */}
         <div>
-          <Group justify="space-between" align="center" mb="sm" wrap="wrap" gap="xs">
-            <div>
-              <Title order={2} size="h3" c="#14281b" style={{ fontFamily: 'var(--font-heading)', fontSize: 'clamp(1.15rem, 3.5vw, 1.45rem)' }}>
-                {selectedCategory === 'all' && !searchQuery
-                  ? `Toàn Bộ Thực Đơn (${filteredItems.length} Món)`
-                  : `${CATEGORIES.find((c) => c.id === selectedCategory)?.label || 'Thực Đơn'} (${filteredItems.length} Món)`}
-              </Title>
-              <Text size="xs" c="#536b5a" mt={2}>
-                Món bán chạy được ưu tiên lên đầu • Bấm vào món để chọn & đặt
-              </Text>
-            </div>
+          <Title order={2} size="h3" c="#14281b" mb="sm">
+            {selectedCategory === 'all' ? 'Thực đơn' : CATEGORIES.find((category) => category.id === selectedCategory)?.label}
+            {' '}({filteredItems.length} món)
+          </Title>
 
-            <Group gap="xs" visibleFrom="xs">
-              <Badge size="sm" variant="light" color="coffee">
-                🔥 Best Seller xếp trước
-              </Badge>
-              <Badge size="sm" variant="light" color="bamboo">
-                Giá 10k - 30k
-              </Badge>
-            </Group>
-          </Group>
-
-          {loading ? (
-            <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing={{ base: 'xs', sm: 'md' }}>
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                <Card key={i} withBorder radius="md" p="xs" style={{ backgroundColor: '#ffffff', borderColor: '#dceee1' }}>
-                  <Skeleton height={140} radius="sm" mb="xs" />
-                  <Skeleton height={16} width="85%" radius="sm" mb={6} />
-                  <Skeleton height={14} width="45%" radius="sm" mb="xs" />
-                  <Skeleton height={34} radius="md" />
-                </Card>
-              ))}
-            </SimpleGrid>
-          ) : filteredItems.length === 0 ? (
+          {filteredItems.length === 0 ? (
             <Card withBorder radius="md" py="3rem" style={{ textAlign: 'center', backgroundColor: '#ffffff' }}>
               <Text size="md" fw={600} c="#2c3f33" mb="xs">
-                Không tìm thấy món "{searchQuery}"
+                {searchQuery.trim() ? `Không tìm thấy món “${searchQuery.trim()}”` : 'Danh mục này chưa có món'}
               </Text>
               <Button
                 variant="outline"
@@ -296,13 +236,19 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
               {filteredItems.map((item) => (
                 <div
                   key={item.id}
-                  onClick={() => handleSelectDrink(item)}
                   className="full-photo-card"
                 >
+                  <button
+                    type="button"
+                    className="menu-item-action"
+                    disabled={!interactive}
+                    aria-label={`Chọn ${item.name}, ${formatPrice(item.price)}`}
+                    onClick={() => handleSelectDrink(item)}
+                  />
                   {/* Full Background Photo */}
                   <img
                     src={item.image}
-                    alt={item.name}
+                    alt=""
                     className="card-bg-img"
                     loading="lazy"
                   />
@@ -371,23 +317,21 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                           {formatPrice(item.price)}
                         </Text>
 
-                        {/* Tactile plus button */}
-                        <div
-                          style={{
-                            width: 26,
-                            height: 26,
-                            borderRadius: '50%',
-                            backgroundColor: '#226135',
-                            color: '#ffffff',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
-                            flexShrink: 0,
+                        <ActionIcon
+                          className="menu-quick-add"
+                          variant="filled"
+                          color="bamboo"
+                          size={34}
+                          radius="xl"
+                          disabled={!interactive}
+                          aria-label={`Thêm một phần ${item.name}`}
+                          onClick={() => {
+                            onAddToCart(item, 1, item.allowCustomization ? '100% Đá' : undefined, item.allowCustomization ? '100% Đường' : undefined);
+                            notifications.show({ message: `Đã thêm 1 × ${item.name}`, color: 'bamboo' });
                           }}
                         >
-                          <IconPlus size={15} stroke={3} />
-                        </div>
+                          <IconPlus size={17} />
+                        </ActionIcon>
                       </Group>
                     </div>
                   </div>
@@ -398,7 +342,6 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
         </div>
       </Container>
 
-      {/* DRINK DETAIL / SELECTION POPUP WITH "MUA NGAY" VÀ "THÊM VÀO GIỎ HÀNG" */}
       <Modal
         opened={!!selectedItem}
         onClose={() => setSelectedItem(null)}
@@ -462,7 +405,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                       <Radio value="100% Đá" label="100% Đá" color="bamboo" size="sm" />
                       <Radio value="70% Đá" label="70% Đá" color="bamboo" size="sm" />
                       <Radio value="50% Đá" label="50% Đá" color="bamboo" size="sm" />
-                      <Radio value="Không Đá" label="Đá Riêng" color="bamboo" size="sm" />
+                      <Radio value="Đá Riêng" label="Đá riêng" color="bamboo" size="sm" />
                     </SimpleGrid>
                   </Radio.Group>
                 </div>
@@ -489,6 +432,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                   </Text>
                   <Textarea
                     placeholder="Ví dụ: Nhiều kem muối, để đá riêng, lấy thêm ly đá..."
+                    maxLength={300}
                     value={customNote}
                     onChange={(e) => setCustomNote(e.currentTarget.value)}
                     minRows={2}
@@ -510,6 +454,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                   size="md"
                   variant="default"
                   disabled={customQuantity <= 1}
+                  aria-label="Giảm số lượng"
                   onClick={() => setCustomQuantity(Math.max(1, customQuantity - 1))}
                 >
                   <IconMinus size={14} />
@@ -520,6 +465,8 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                 <ActionIcon
                   size="md"
                   variant="default"
+                  aria-label="Tăng số lượng"
+                  disabled={customQuantity >= 99}
                   onClick={() => setCustomQuantity(customQuantity + 1)}
                 >
                   <IconPlus size={14} />
@@ -529,7 +476,6 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
 
             <Divider />
 
-            {/* 2 PROMINENT ACTION BUTTONS: MUA NGAY (ZALO) & THÊM VÀO GIỎ HÀNG */}
             <Stack gap="xs">
               <Button
                 color="bamboo"
@@ -546,24 +492,6 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, lo
                 }}
               >
                 Thêm Vào Giỏ Hàng • {formatPrice(selectedItem.price * customQuantity)}
-              </Button>
-
-              <Button
-                variant="filled"
-                size="md"
-                fullWidth
-                leftSection={<IconBolt size={20} />}
-                onClick={handleBuyNowZalo}
-                style={{
-                  backgroundColor: '#0068ff',
-                  color: '#ffffff',
-                  fontWeight: 700,
-                  height: '46px',
-                  fontSize: '1rem',
-                  boxShadow: '0 4px 14px rgba(0, 104, 255, 0.3)',
-                }}
-              >
-                Mua Ngay (Gửi Zalo Quán)
               </Button>
             </Stack>
           </Stack>

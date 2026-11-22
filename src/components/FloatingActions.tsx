@@ -6,6 +6,7 @@ import { siteConfig } from '../config/siteConfig';
 
 interface FloatingActionsProps {
   cartItemCount: number;
+  trackingOrder: boolean;
   cartTotalAmount: number;
   onOpenCart: () => void;
   onToggleCart?: () => void;
@@ -14,6 +15,7 @@ interface FloatingActionsProps {
 
 export const FloatingActions: React.FC<FloatingActionsProps> = ({
   cartItemCount,
+  trackingOrder,
   cartTotalAmount,
   onOpenCart,
   onToggleCart,
@@ -65,11 +67,14 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
     }
   };
 
+  const showCartAction = trackingOrder || cartItemCount > 0;
+
   return (
     <>
       {/* 1. MOBILE BOTTOM FLOATING CART BAR (HIGH-CONVERSION APP-LIKE EXPERIENCE) - ONLY ON MOBILE */}
-      {cartItemCount > 0 && (
-        <div
+      {showCartAction && (
+        <button
+          type="button"
           onClick={handleCartClick}
           className="mobile-cart-bar"
           style={{
@@ -90,46 +95,49 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
             transition: 'transform 0.15s ease',
           }}
         >
-          <Group gap="xs" wrap="nowrap">
-            <div style={{ position: 'relative' }}>
+          <Group component="span" gap="xs" wrap="nowrap">
+            <span style={{ position: 'relative', display: 'flex' }}>
               <IconShoppingCart size={22} />
-              <Badge
-                size="xs"
-                color="red"
-                circle
-                style={{
-                  position: 'absolute',
-                  top: -8,
-                  right: -8,
-                  fontWeight: 800,
-                  border: '1.5px solid white',
-                }}
-              >
-                {cartItemCount}
-              </Badge>
-            </div>
-            <div>
-              <Text fw={800} size="sm" style={{ lineHeight: 1.1 }}>
-                {formatShortPrice(cartTotalAmount)}
+              {!trackingOrder && (
+                <Badge
+                  component="span"
+                  size="xs"
+                  color="red"
+                  circle
+                  style={{
+                    position: 'absolute',
+                    top: -8,
+                    right: -8,
+                    fontWeight: 800,
+                    border: '1.5px solid white',
+                  }}
+                >
+                  {cartItemCount}
+                </Badge>
+              )}
+            </span>
+            <span>
+              <Text component="span" fw={800} size="sm" display="block" style={{ lineHeight: 1.1 }}>
+                {trackingOrder ? 'Đơn của bạn' : formatShortPrice(cartTotalAmount)}
               </Text>
-              <Text size="11px" c="#c6e8cc">
-                {cartItemCount} món trong giỏ
+              <Text component="span" size="11px" c="#c6e8cc" display="block">
+                {trackingOrder ? 'Xem trạng thái đơn' : `${cartItemCount} món trong giỏ`}
               </Text>
-            </div>
+            </span>
           </Group>
 
-          <Group gap={6} wrap="nowrap">
-            <Text fw={700} size="sm">
-              Xem & Đặt Món
+          <Group component="span" gap={6} wrap="nowrap">
+            <Text component="span" fw={700} size="sm">
+              {trackingOrder ? 'Theo dõi đơn' : 'Xem giỏ'}
             </Text>
             <IconArrowRight size={18} />
           </Group>
-        </div>
+        </button>
       )}
 
       {/* 2. FLOATING CONTACT ACTIONS (ADAPTIVE DESKTOP & MOBILE) */}
       <div
-        className={`floating-contact-actions ${cartItemCount > 0 ? 'has-cart-items' : ''}`}
+        className={`floating-contact-actions ${showCartAction ? 'has-cart-items' : ''}`}
         style={{
           position: 'fixed',
           right: '16px',
@@ -142,7 +150,7 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
         }}
       >
         {/* Desktop-only floating cart pill (When cart has items) */}
-        {cartItemCount > 0 && (
+        {showCartAction && (
           <Button
             onClick={handleCartClick}
             size="md"
@@ -159,13 +167,15 @@ export const FloatingActions: React.FC<FloatingActionsProps> = ({
               padding: '0 16px',
             }}
           >
-            <span>Giỏ Hàng</span>
-            <Badge size="sm" color="red" variant="filled" ml="xs" style={{ fontWeight: 800 }}>
-              {cartItemCount}
-            </Badge>
-            <span style={{ marginLeft: 6, opacity: 0.9 }}>
-              • {formatShortPrice(cartTotalAmount)}
-            </span>
+            <span>{trackingOrder ? 'Theo dõi đơn' : 'Giỏ hàng'}</span>
+            {!trackingOrder && (
+              <>
+                <Badge size="sm" color="red" variant="filled" ml="xs" style={{ fontWeight: 800 }}>
+                  {cartItemCount}
+                </Badge>
+                <span style={{ marginLeft: 6, opacity: 0.9 }}>· {formatShortPrice(cartTotalAmount)}</span>
+              </>
+            )}
           </Button>
         )}
 

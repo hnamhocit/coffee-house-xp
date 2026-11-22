@@ -60,7 +60,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
           <Stack gap="sm">
             <Group gap="xs" align="center">
               <img
-                src="/images/logo.png"
+                src="/images/logo.webp"
                 alt="Logo Xuân Phạm"
                 style={{
                   width: 44,

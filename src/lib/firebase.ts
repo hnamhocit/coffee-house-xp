@@ -1,36 +1,54 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
+import { initializeApp, getApps } from "firebase/app";
 import {
   getAuth,
+  connectAuthEmulator,
+  signInAnonymously,
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { initializeFirestore, getFirestore } from "firebase/firestore";
+import { initializeFirestore, getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 
 // Your web app's Firebase configuration
+export const useFirebaseEmulators = import.meta.env.DEV && import.meta.env.PUBLIC_FIREBASE_EMULATORS === "true";
+
 export const firebaseConfig = {
   apiKey: "AIzaSyA1smv40qrIADLsDuAJDbpJiPqONyEGrpE",
   authDomain: "coffee-house-xp.firebaseapp.com",
-  projectId: "coffee-house-xp",
+  projectId: useFirebaseEmulators ? "demo-coffee-house-xp" : "coffee-house-xp",
   storageBucket: "coffee-house-xp.firebasestorage.app",
   messagingSenderId: "851825617817",
   appId: "1:851825617817:web:b8792c124623c6b1ec8108",
 };
 
-// Initialize Firebase (safely preventing duplicate app initialization in SSR/HMR)
-export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const auth = getAuth(app);
+function connectFirebase(name?: string) {
+  const existing = getApps().find((instance) => instance.name === (name ?? "[DEFAULT]"));
+  const app = existing ?? initializeApp(firebaseConfig, name);
+  const auth = getAuth(app);
+  const db = existing
+    ? getFirestore(app)
+    : initializeFirestore(app, { experimentalForceLongPolling: true });
 
-// Initialize Firestore with experimentalForceLongPolling to avoid adblocker/Brave Shields stream blocks
-let firestoreDb;
-try {
-  firestoreDb = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
-  });
-} catch {
-  firestoreDb = getFirestore(app);
+  if (!existing && useFirebaseEmulators && typeof window !== "undefined") {
+    connectAuthEmulator(auth, "http://127.0.0.1:9099");
+    connectFirestoreEmulator(db, "127.0.0.1", 8080);
+  }
+  return { app, auth, db };
 }
-export const db = firestoreDb;
+
+export const { auth, db } = connectFirebase();
+export const { auth: customerAuth, db: customerDb } = connectFirebase("customer");
+
+let guestSignIn: Promise<unknown> | undefined;
+
+export async function ensureOrderSession() {
+  await customerAuth.authStateReady();
+  if (customerAuth.currentUser) return;
+  guestSignIn ??= signInAnonymously(customerAuth).finally(() => {
+    guestSignIn = undefined;
+  });
+  await guestSignIn;
+}
 
 // Google Auth Provider (Google-only sign-in)
 export const googleProvider = new GoogleAuthProvider();

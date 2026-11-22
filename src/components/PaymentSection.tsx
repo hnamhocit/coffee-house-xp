@@ -43,7 +43,7 @@ export const PaymentSection: React.FC = () => {
           </Title>
 
           <Text size="sm" c="#536b5a">
-            Thanh toán tiện lợi 24/7 bằng bất kỳ ứng dụng ngân hàng nào qua mã VietQR
+            Chuyển khoản sau khi quán xác nhận đơn. Nếu đặt trên website, dùng mã VietQR trong mục Theo dõi đơn.
           </Text>
         </div>
 

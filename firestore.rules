@@ -1,24 +1,75 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // 1. Bất kỳ ai (khách hàng chưa đăng nhập) đều có thể xem thực đơn quán
-    // Chỉ có admin đã đăng nhập bằng Google mới được thêm, sửa, xóa món
-    match /products/{productId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.uid in ['hedaE90aVETHApCcrrjX0sYbehc2m', '8lWfVmxxS9YMnzYm1vk405Fkdhw1'];
     }
 
-    // 2. Khách hàng vãng lai có thể tạo đơn hàng (đặt món) và theo dõi trạng thái đơn của mình
-    // Chủ quán có thể xem toàn bộ đơn và cập nhật trạng thái đơn (pha chế, đã phục vụ, đã thu tiền)
-    match /orders/{orderId} {
-      allow read, create, update: if true;
-      allow delete: if request.auth != null;
+    function isGuest() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
     }
-    
-    // Hoặc cho phép toàn quyền trong giai đoạn thử nghiệm:
-    // match /{document=**} {
-    //   allow read, write: if true;
-    // }
+
+    function ownsDocument() {
+      return request.auth != null && resource.data.get('ownerUid', '') == request.auth.uid;
+    }
+
+    function isNewGuestOrder(orderId) {
+      let order = request.resource.data;
+      let receiptPath = /databases/$(database)/documents/checkoutReceipts/$(orderId);
+      return isGuest()
+        && orderId.matches('[0-9a-f]{64}')
+        && order.keys().hasOnly(['ownerUid', 'orderCode', 'items', 'totalAmount', 'paymentMethod', 'note',
+                                  'partySize', 'status', 'customerPaid', 'priceVerified', 'createdAt', 'updatedAt'])
+        && order.ownerUid == request.auth.uid
+        && order.orderCode.matches('XP-[0-9A-F]{8}')
+        && order.status == 'pending'
+        && order.priceVerified == false
+        && order.customerPaid == false
+        && order.items is list && order.items.size() >= 1 && order.items.size() <= 40
+        && order.totalAmount is int && order.totalAmount >= 0
+        && order.paymentMethod in ['cash', 'vietqr']
+        && order.note is string && order.note.size() <= 500
+        && order.get('partySize', 1) is int && order.get('partySize', 1) >= 1 && order.get('partySize', 1) <= 99
+        && order.createdAt is int
+        && order.createdAt >= request.time.toMillis() - 3600000
+        && order.createdAt <= request.time.toMillis() + 3600000
+        && order.updatedAt == request.time
+        && !exists(receiptPath)
+        && getAfter(receiptPath).data.ownerUid == request.auth.uid;
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /checkoutReceipts/{orderId} {
+      allow get: if isGuest() && (resource == null || ownsDocument());
+      allow create: if isGuest()
+        && request.resource.data.keys().hasOnly(['ownerUid', 'fingerprint'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.fingerprint.matches('[0-9a-f]{64}')
+        && !exists(/databases/$(database)/documents/orders/$(orderId))
+        && getAfter(/databases/$(database)/documents/orders/$(orderId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /orders/{orderId} {
+      allow get: if isAdmin() || (isGuest() && resource == null) || ownsDocument();
+      allow list, delete: if isAdmin();
+      allow create: if isAdmin() || isNewGuestOrder(orderId);
+      allow update: if (isAdmin()
+        && (resource.data.get('priceVerified', true) == true
+          || request.resource.data.status in ['pending', 'cancelled']
+          || request.resource.data.priceVerified == true))
+        || (ownsDocument()
+        && resource.data.status == 'served'
+        && resource.data.get('priceVerified', true) == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerPaid', 'updatedAt'])
+        && request.resource.data.customerPaid == true
+        && request.resource.data.updatedAt == request.time);
+    }
   }
 }

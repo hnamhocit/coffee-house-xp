@@ -29,7 +29,7 @@ export const Hero: React.FC<HeroProps> = ({ onOpenOriginalMenu }) => {
       }}
     >
       <Container size="md">
-        <div style={{ maxWidth: '720px', margin: '0 auto' }}>
+        <div className="landing-intro" style={{ maxWidth: '720px', margin: '0 auto' }}>
           {/* Clean Human Title */}
           <Title
             order={1}
@@ -67,7 +67,7 @@ export const Hero: React.FC<HeroProps> = ({ onOpenOriginalMenu }) => {
           </Text>
 
           {/* Only 2 Clean, Human Action Buttons */}
-          <Group justify="center" gap="sm">
+          <Group className="landing-actions" justify="center" gap="sm">
             <Button
               component="a"
               href="#thuc-don"

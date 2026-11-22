@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Drawer,
   Stack,
@@ -10,10 +10,8 @@ import {
   Badge,
   SegmentedControl,
   Textarea,
+  NumberInput,
   Card,
-  CopyButton,
-  ThemeIcon,
-  Paper,
   Alert,
 } from '@mantine/core';
 import {
@@ -22,28 +20,35 @@ import {
   IconMinus,
   IconShoppingCart,
   IconPhone,
-  IconCopy,
-  IconCheck,
   IconReceipt,
-  IconDownload,
-  IconExternalLink,
-  IconCash,
-  IconClock,
-  IconSparkles,
-  IconChecklist,
-  IconCup,
-  IconRefresh,
-  IconAlertCircle,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import type { CartItem, PaymentMethod } from '../types/cart';
 import { siteConfig } from '../config/siteConfig';
 import {
-  createCustomerOrder,
   subscribeSingleOrder,
   markOrderCustomerPaid,
 } from '../services/firebaseService';
-import type { CustomerOrder } from '../types/order';
+import { ensureOrderSession } from '../lib/firebase';
+import { buildCheckout, CheckoutNotSent, OrderPricingError, submitCheckout, type CheckoutAttempt } from '../services/customerCheckout';
+import type { CustomerOrder, OrderItemDetail } from '../types/order';
+import { OrderStatusPanel, orderStatusLabels } from './OrderStatusPanel';
+
+type RecentOrder = Pick<CustomerOrder, 'id' | 'orderCode' | 'items'>;
+const recentOrdersKey = 'xp_recent_orders';
+
+function readRecentOrders(): RecentOrder[] {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(recentOrdersKey) ?? '[]');
+    if (!Array.isArray(saved)) return [];
+    return saved.filter((order) => typeof order?.id === 'string' && typeof order.orderCode === 'string'
+      && Array.isArray(order.items) && order.items.length > 0
+      && order.items.every((item: OrderItemDetail) => typeof item?.id === 'string'
+        && typeof item.name === 'string' && Number.isSafeInteger(item.quantity) && item.quantity > 0)).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
 
 interface CartDrawerProps {
   opened: boolean;
@@ -52,6 +57,11 @@ interface CartDrawerProps {
   onUpdateQuantity: (cartId: string, delta: number) => void;
   onRemoveItem: (cartId: string) => void;
   onClearCart: () => void;
+  onRefreshCart: () => void;
+  onReorder: (items: OrderItemDetail[]) => { added: number; unavailable: number };
+  onTrackingChange: (tracking: boolean) => void;
+  onShowOrder: () => void;
+  onOpenCart: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -61,61 +71,124 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onUpdateQuantity,
   onRemoveItem,
   onClearCart,
+  onRefreshCart,
+  onReorder,
+  onTrackingChange,
+  onShowOrder,
+  onOpenCart,
 }) => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('vietqr');
   const [generalNote, setGeneralNote] = useState('');
-  const [downloadingQr, setDownloadingQr] = useState(false);
+  const [partySize, setPartySize] = useState<number | string>('');
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [reorderMessage, setReorderMessage] = useState('');
   const [submittingOrder, setSubmittingOrder] = useState(false);
+
+  const submitting = useRef(false);
+  const [attempt, setAttempt] = useState<CheckoutAttempt | null>(null);
+  const [editingAttempt, setEditingAttempt] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [cartNeedsRefresh, setCartNeedsRefresh] = useState(false);
+  const [trackingError, setTrackingError] = useState('');
+  const [paymentError, setPaymentError] = useState('');
+  const [trackingRetry, setTrackingRetry] = useState(0);
 
   // Active Live Order State
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<CustomerOrder | null>(null);
   const [markingPaid, setMarkingPaid] = useState(false);
+  const lastServerOrder = useRef<Pick<CustomerOrder, 'id' | 'status'> | null>(null);
 
-  // Load activeOrderId from localStorage on mount
   useEffect(() => {
+    setRecentOrders(readRecentOrders());
     try {
-      const savedId = localStorage.getItem('xp_active_order_id');
-      if (savedId) {
-        setActiveOrderId(savedId);
+      const savedOrderId = localStorage.getItem('xp_active_order_id');
+      setActiveOrderId(savedOrderId);
+      if (savedOrderId) {
+        localStorage.removeItem('xp_checkout_attempt');
+        return;
       }
-    } catch (e) {
-      console.warn(e);
+      const saved = localStorage.getItem('xp_checkout_attempt');
+      if (saved) {
+        const pending = JSON.parse(saved) as CheckoutAttempt;
+        if (pending.requestId && Array.isArray(pending.checkout?.items)) {
+          setAttempt(pending);
+          setPaymentMethod(pending.checkout.paymentMethod);
+          setGeneralNote(pending.checkout.note);
+          setPartySize(pending.checkout.partySize ?? '');
+        }
+      }
+    } catch (error) {
+      console.warn('Không thể khôi phục đơn trên thiết bị này:', error);
     }
   }, []);
 
-  // Real-time listener for customer's active order
   useEffect(() => {
-    if (!activeOrderId) {
-      setActiveOrder(null);
-      return;
-    }
+    onTrackingChange(Boolean(activeOrderId));
+  }, [activeOrderId, onTrackingChange]);
 
-    // Nếu là đơn hàng offline/fallback
+  useEffect(() => {
+    if (!activeOrderId) return;
     if (activeOrderId.startsWith('local_')) {
-      try {
-        const localData = localStorage.getItem('xp_local_order_data');
-        if (localData) {
-          setActiveOrder(JSON.parse(localData));
-        }
-      } catch (e) {
-        console.warn(e);
-      }
+      setTrackingError('Đơn cũ chỉ được lưu trên thiết bị. Hãy liên hệ quán để kiểm tra đơn hoặc khoản chuyển.');
       return;
     }
 
-    const unsubscribe = subscribeSingleOrder(activeOrderId, (order) => {
-      if (order) {
-        setActiveOrder(order);
-      } else {
-        // Order was deleted from backend
-        setActiveOrderId(null);
-        localStorage.removeItem('xp_active_order_id');
-      }
-    });
+    let cancelled = false;
+    let unsubscribe = () => {};
+    setTrackingError('');
+    const reportError = () => {
+      if (!cancelled) setTrackingError('Chưa cập nhật được đơn. Hãy thử lại hoặc liên hệ quán để kiểm tra.');
+    };
+    ensureOrderSession().then(() => {
+      if (cancelled) return;
+      unsubscribe = subscribeSingleOrder(activeOrderId, (order, fromCache) => {
+        if (order) {
+          setActiveOrder(order);
+          setTrackingError('');
+          if (!fromCache) {
+            const previous = lastServerOrder.current;
+            lastServerOrder.current = { id: order.id, status: order.status };
+            if (previous?.id === order.id && previous.status !== order.status) {
+              notifications.show({
+                id: `order-status-${order.id}-${order.status}`,
+                title: orderStatusLabels[order.status],
+                message: (
+                  <Group gap="xs">
+                    <Text size="sm">Đơn #{order.orderCode}</Text>
+                    <Button variant="subtle" size="compact-xs" onClick={onShowOrder}>Xem đơn</Button>
+                  </Group>
+                ),
+                color: order.status === 'cancelled' ? 'red' : 'bamboo',
+                role: 'status',
+                autoClose: 7000,
+              });
+            }
+          }
+        } else {
+          setActiveOrder(null);
+          setTrackingError('Quán không còn lưu đơn này. Hãy liên hệ quán nếu cần đối chiếu.');
+        }
+      }, reportError);
+    }).catch(reportError);
 
-    return () => unsubscribe();
-  }, [activeOrderId]);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [activeOrderId, trackingRetry, onShowOrder]);
+
+  useEffect(() => {
+    if (activeOrder?.status !== 'completed' || activeOrder.items.length === 0) return;
+    const { id, orderCode, items } = activeOrder;
+    const next = [{ id, orderCode, items }, ...readRecentOrders().filter((order) => order.id !== id)].slice(0, 5);
+    setRecentOrders(next);
+    try {
+      localStorage.setItem(recentOrdersKey, JSON.stringify(next));
+    } catch {
+      // Keep recent orders in memory when storage is unavailable.
+    }
+  }, [activeOrder]);
 
   const totalAmount = items.reduce((acc, curr) => acc + curr.totalPrice, 0);
   const totalItemCount = items.reduce((acc, curr) => acc + curr.quantity, 0);
@@ -124,195 +197,92 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     return amount.toLocaleString('vi-VN') + ' đ';
   };
 
-  const currentBillAmount = activeOrder ? activeOrder.totalAmount : totalAmount;
-  const currentBillPayment = activeOrder ? activeOrder.paymentMethod : paymentMethod;
-
-  // VietQR URL with bill amount
-  const vietQrUrl = `https://img.vietqr.io/image/${siteConfig.bankInfo.bankShortCode}-${siteConfig.bankInfo.accountNumber}-compact2.png?amount=${currentBillAmount}&addInfo=XP%20Coffee&accountName=${encodeURIComponent(siteConfig.bankInfo.accountHolder)}`;
-
-  // Download QR code image directly with bill amount
-  const handleDownloadQr = async () => {
+  const forgetAttempt = () => {
+    setAttempt(null);
+    setEditingAttempt(false);
     try {
-      setDownloadingQr(true);
-      const res = await fetch(vietQrUrl, { mode: 'cors' });
-      if (!res.ok) throw new Error('Fetch failed');
-      const blob = await res.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `VietQR_XuanPham_${currentBillAmount}d.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
-
-      notifications.show({
-        title: 'Tải mã QR thành công!',
-        message: `Đã lưu mã VietQR ${formatPrice(currentBillAmount)}. Bạn có thể mở app ngân hàng quét ảnh này để thanh toán nhé!`,
-        color: 'teal',
-      });
-    } catch {
-      window.open(vietQrUrl, '_blank');
-      notifications.show({
-        title: 'Đang mở mã VietQR!',
-        message: `Mã thanh toán ${formatPrice(currentBillAmount)} đã mở. Bạn có thể nhấn giữ ảnh để tải về hoặc quét trực tiếp.`,
-        color: 'bamboo',
-      });
-    } finally {
-      setDownloadingQr(false);
+      localStorage.removeItem('xp_checkout_attempt');
+    } catch (error) {
+      console.warn(error);
     }
   };
 
-  // Generate order message for Zalo
-  const generateOrderMessage = (orderCode?: string) => {
-    let msg = `🎋 [ĐƠN ĐẶT MÓN - XUÂN PHẠM COFFEE HOUSE]\n`;
-    if (orderCode) {
-      msg += `🏷️ Mã đơn: #${orderCode}\n`;
-    }
-    msg += `📍 Địa chỉ: ${siteConfig.addressShort}\n`;
-    msg += `💳 Thanh toán: ${paymentMethod === 'vietqr' ? 'Chuyển khoản VietQR' : 'Tiền mặt'}\n`;
-    msg += `------------------------------------\n`;
-    msg += `DANH SÁCH MÓN:\n`;
-    items.forEach((item, index) => {
-      msg += `${index + 1}. ${item.item.name} x${item.quantity} = ${formatPrice(item.totalPrice)}\n`;
-      const options = [];
-      if (item.ice) options.push(item.ice);
-      if (item.sugar) options.push(item.sugar);
-      if (item.note) options.push(`Lưu ý: ${item.note}`);
-      if (options.length > 0) {
-        msg += `   └ [${options.join(' - ')}]\n`;
-      }
-    });
-    msg += `------------------------------------\n`;
-    msg += `💰 TỔNG CỘNG: ${formatPrice(totalAmount)}\n`;
-    if (generalNote.trim()) {
-      msg += `📝 Ghi chú: ${generalNote.trim()}\n`;
-    }
-    if (paymentMethod === 'vietqr') {
-      msg += `------------------------------------\n`;
-      msg += `🏦 Techcombank: ${siteConfig.bankInfo.accountNumber} - ${siteConfig.bankInfo.accountHolder}\n`;
-      msg += `Nội dung CK: XP Coffee\n`;
-    } else {
-      msg += `------------------------------------\n`;
-      msg += `💵 Khách thanh toán tiền mặt tại quầy / tại bàn.\n`;
-    }
-    return msg;
-  };
-
-  // BƯỚC 1: KHÁCH BẤM ĐẶT MÓN ➔ LẬP TỨC TẠO ĐƠN VÀO FIRESTORE CHO CHỦ QUÁN SOẠN TRƯỚC
   const handleCreateOrder = async () => {
-    if (items.length === 0) return;
+    if (submitting.current || activeOrderId || ((!attempt || editingAttempt) && items.length === 0)) return;
+    if (partySize !== '' && (typeof partySize !== 'number' || !Number.isInteger(partySize) || partySize < 1 || partySize > 99)) {
+      setCheckoutError('Nhập số người từ 1 đến 99 hoặc để trống.');
+      return;
+    }
+    submitting.current = true;
+    setSubmittingOrder(true);
+    setCheckoutError('');
+    setCartNeedsRefresh(false);
+
     try {
-      setSubmittingOrder(true);
-      const orderItems = items.map((i) => {
-        const itemObj: any = {
-          id: i.item.id,
-          name: i.item.name,
-          price: i.item.price,
-          quantity: i.quantity,
-          totalPrice: i.totalPrice,
-        };
-        if (i.ice) itemObj.ice = i.ice;
-        if (i.sugar) itemObj.sugar = i.sugar;
-        if (i.note && i.note.trim()) itemObj.note = i.note.trim();
-        return itemObj;
-      });
-
+      const cartCheckout = buildCheckout(items, paymentMethod, generalNote, typeof partySize === 'number' ? partySize : undefined);
+      const nextAttempt = {
+        requestId: attempt?.requestId ?? crypto.randomUUID(),
+        checkout: attempt && !editingAttempt ? attempt.checkout : cartCheckout,
+      };
       try {
-        // 1. Thử tạo đơn hàng vào Firestore (Trạng thái: 'pending')
-        const result = await createCustomerOrder({
-          items: orderItems,
-          totalAmount,
-          paymentMethod,
-          note: generalNote.trim() || undefined,
-        });
+        localStorage.setItem('xp_checkout_attempt', JSON.stringify(nextAttempt));
+      } catch (error) {
+        throw new CheckoutNotSent('Trình duyệt chưa cho phép lưu mã đơn. Bạn có thể gọi quán để đặt món.', { cause: error });
+      }
+      setAttempt(nextAttempt);
+      setEditingAttempt(false);
 
-        // 2. Lưu ID đơn vào máy khách để theo dõi real-time
-        setActiveOrderId(result.id);
-        try {
-          localStorage.setItem('xp_active_order_id', result.id);
-        } catch (e) {
-          console.warn(e);
-        }
-
-        // 3. Xóa giỏ hàng sau khi tạo đơn thành công
+      const result = await submitCheckout(nextAttempt);
+      setActiveOrderId(result.id);
+      try {
+        localStorage.setItem('xp_active_order_id', result.id);
+        forgetAttempt();
+      } catch (error) {
+        console.warn('Không thể lưu mã đơn:', error);
+      }
+      setAttempt(null);
+      if (result.matchesCheckout && JSON.stringify(nextAttempt.checkout) === JSON.stringify(cartCheckout)) {
         onClearCart();
-
-        // 4. Báo thông báo thành công
-        notifications.show({
-          title: 'Tạo đơn hàng thành công!',
-          message: `Mã đơn #${result.orderCode}. Chủ quán đã nhận được đơn và đang chuẩn bị món cho bạn!`,
-          color: 'teal',
-          autoClose: 5000,
-        });
-      } catch (firestoreErr: any) {
-        console.warn('Firestore error, switching to seamless local fallback:', firestoreErr);
-        // Fallback tự động khi Firebase Rules chưa publish hoặc khách bị chặn:
-        // Đảm bảo khách hàng luôn đặt được món, mở ngay VietQR và gửi qua Zalo!
-        const localCode = `XP-${Math.floor(1000 + Math.random() * 9000)}`;
-        const localOrder: CustomerOrder = {
-          id: `local_${Date.now()}`,
-          orderCode: localCode,
-          items: orderItems,
-          totalAmount,
-          paymentMethod,
-          status: 'served', // Mở luôn màn hình thanh toán VietQR cho khách
-          note: generalNote.trim(),
-          customerPaid: false,
-          createdAt: Date.now(),
-        };
-
-        setActiveOrderId(localOrder.id);
-        setActiveOrder(localOrder);
-        try {
-          localStorage.setItem('xp_active_order_id', localOrder.id);
-          localStorage.setItem('xp_local_order_data', JSON.stringify(localOrder));
-        } catch (e) {
-          console.warn(e);
-        }
-
-        onClearCart();
-        notifications.show({
-          title: `Đã tạo đơn #${localCode}!`,
-          message: `Đơn đặt món của bạn đã sẵn sàng. Bạn có thể quét mã VietQR để thanh toán hoặc gửi qua Zalo cho quán!`,
-          color: 'teal',
-          autoClose: 6000,
-        });
+        setGeneralNote('');
+        setPartySize('');
+        setReorderMessage('');
+      } else {
+        setReorderMessage('Quán đã nhận phiên bản trước của đơn. Giỏ đã chỉnh được giữ lại.');
+      }
+      onShowOrder();
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      if (error instanceof CheckoutNotSent || error instanceof OrderPricingError || code === 'permission-denied') {
+        if (!attempt && error instanceof CheckoutNotSent) forgetAttempt();
+        else setEditingAttempt(true);
+        setCheckoutError(code === 'permission-denied'
+          ? 'Firebase từ chối lưu đơn. Giỏ hàng vẫn còn. Hãy gọi quán nếu cần đặt ngay.'
+          : (error as Error).message);
+        setCartNeedsRefresh(error instanceof OrderPricingError);
+      } else {
+        setCheckoutError('Chưa xác nhận được đơn. Hãy thử lại để kiểm tra cùng đơn này.');
       }
     } finally {
+      submitting.current = false;
       setSubmittingOrder(false);
     }
   };
 
   // Khách bấm "Tôi đã chuyển khoản xong / Đã gửi tiền"
   const handleCustomerMarkPaid = async () => {
-    if (!activeOrderId) return;
+    if (!activeOrderId || trackingError) return;
     try {
       setMarkingPaid(true);
 
-      // Nếu là đơn local fallback
-      if (activeOrderId.startsWith('local_')) {
-        if (activeOrder) {
-          const updated = { ...activeOrder, customerPaid: true, status: 'completed' as const };
-          setActiveOrder(updated);
-          localStorage.setItem('xp_local_order_data', JSON.stringify(updated));
-        }
-        notifications.show({
-          title: 'Đã hoàn tất thanh toán!',
-          message: 'Cảm ơn quý khách đã ủng hộ Xuân Phạm Coffee House!',
-          color: 'teal',
-        });
-        return;
-      }
-
+      setPaymentError('');
       await markOrderCustomerPaid(activeOrderId);
       notifications.show({
         title: 'Đã báo thanh toán!',
         message: 'Chủ quán đang kiểm tra và sẽ hoàn tất đơn hàng ngay lập tức.',
         color: 'teal',
       });
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setPaymentError('Chưa gửi được báo cáo thanh toán. Hãy thử lại hoặc gọi quán.');
     } finally {
       setMarkingPaid(false);
     }
@@ -322,6 +292,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const handleResetForNewOrder = () => {
     setActiveOrderId(null);
     setActiveOrder(null);
+    forgetAttempt();
+    setTrackingError('');
+    setPaymentError('');
     try {
       localStorage.removeItem('xp_active_order_id');
       localStorage.removeItem('xp_local_order_data');
@@ -330,683 +303,344 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   };
 
-  return (
-    <Drawer
-      opened={opened}
-      onClose={onClose}
-      position="right"
-      size="md"
-      zIndex={2500}
-      withCloseButton
-      closeButtonProps={{ 'aria-label': 'Đóng giỏ hàng', size: 'lg' }}
-      title={
-        <Group gap="xs">
-          <IconShoppingCart size={22} color="#226135" />
-          <Text fw={700} c="#14281b" size="lg" style={{ fontFamily: 'var(--font-heading)' }}>
-            {activeOrder ? `Tiến Trình Đơn #${activeOrder.orderCode}` : `Giỏ Hàng (${totalItemCount} món)`}
-          </Text>
-        </Group>
-      }
-      styles={{
-        inner: {
-          padding: 0,
-        },
-        content: {
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100dvh',
-          maxHeight: '100dvh',
-          overflow: 'hidden',
-        },
-        header: {
-          flexShrink: 0,
-          borderBottom: '1px solid #e8f0e9',
-          padding: '12px 16px',
-        },
-        body: {
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          padding: 0,
-          minHeight: 0,
-        },
-      }}
-    >
-      {/* ========================================================
-          CASE 1: KHÁCH ĐÃ CÓ ĐƠN HÀNG ĐANG XỬ LÝ (LIVE REALTIME ORDER)
-          ======================================================== */}
-      {activeOrder ? (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minHeight: 0 }}>
-          <div
-            className="cart-drawer-scrollable"
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              WebkitOverflowScrolling: 'touch',
-              overscrollBehavior: 'contain',
-              padding: '14px 16px',
-              minHeight: 0,
-            }}
-          >
-            <Stack gap="md">
-              {/* Header Badge & Stepper Status */}
-              <Paper withBorder p="md" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#b8d7be' }}>
-                <Group justify="space-between" align="center" mb="xs">
-                  <div>
-                    <Text size="xs" c="#607667">
-                      MÃ ĐƠN HÀNG:
-                    </Text>
-                    <Text fw={800} size="lg" c="#174421" style={{ fontFamily: 'var(--font-heading)' }}>
-                      #{activeOrder.orderCode}
-                    </Text>
-                  </div>
+  const reorder = (order: RecentOrder) => {
+    const { added, unavailable } = onReorder(order.items);
+    if (added && activeOrder?.status === 'completed') handleResetForNewOrder();
+    setReorderMessage(added
+      ? (unavailable ? 'Đã thêm các món còn bán. Một số món trong đơn cũ đã hết.' : 'Đã thêm combo vào giỏ theo giá hiện tại.')
+      : 'Các món trong đơn này hiện không có trong thực đơn.');
+    return Boolean(added);
+  };
 
-                  <Badge
-                    size="md"
-                    color={
-                      activeOrder.status === 'pending'
-                        ? 'yellow'
-                        : activeOrder.status === 'served'
-                        ? 'blue'
-                        : activeOrder.status === 'completed'
-                        ? 'teal'
-                        : 'red'
-                    }
+  const recentOrderList = recentOrders.length > 0 && (
+    <Stack gap="xs">
+      <Text fw={700} size="sm">Đơn gần đây</Text>
+      {recentOrders.map((order) => (
+        <Group key={order.id} justify="space-between" align="center" wrap="nowrap">
+          <div style={{ minWidth: 0 }}>
+            <Text fw={600} size="sm">#{order.orderCode}</Text>
+            <Text size="xs" c="dimmed" lineClamp={2}>
+              {order.items.map((item) => `${item.quantity} × ${item.name}`).join(' · ')}
+            </Text>
+          </div>
+          <Button variant="light" size="compact-sm" onClick={() => reorder(order)} aria-label={`Đặt lại đơn ${order.orderCode}`}>
+            Đặt lại
+          </Button>
+        </Group>
+      ))}
+    </Stack>
+  );
+
+  return (
+    <>
+      {activeOrderId && (
+        <OrderStatusPanel
+          order={activeOrder}
+          trackingError={trackingError}
+          feedback={reorderMessage}
+          markingPaid={markingPaid}
+          paymentError={paymentError}
+          canRetry={!activeOrderId.startsWith('local_')}
+          onRetry={() => setTrackingRetry((count) => count + 1)}
+          onMarkPaid={handleCustomerMarkPaid}
+          onReorder={() => {
+            if (activeOrder && reorder(activeOrder)) onOpenCart();
+          }}
+          onOpenCart={onOpenCart}
+          onDismiss={handleResetForNewOrder}
+        />
+      )}
+      <Drawer
+        opened={opened}
+        onClose={() => { if (!submitting.current) onClose(); }}
+        position="right"
+        size="md"
+        zIndex={2500}
+        withCloseButton
+        closeButtonProps={{ 'aria-label': 'Đóng giỏ hàng', size: 'lg' }}
+        title={
+          <Group gap="xs">
+            <IconShoppingCart size={22} color="#226135" />
+            <Text fw={700} c="#14281b" size="lg" style={{ fontFamily: 'var(--font-heading)' }}>
+              {`Giỏ hàng (${totalItemCount} món)`}
+            </Text>
+          </Group>
+        }
+        styles={{
+          inner: {
+            padding: 0,
+          },
+          content: {
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100dvh',
+            maxHeight: '100dvh',
+            overflow: 'hidden',
+          },
+          header: {
+            flexShrink: 0,
+            borderBottom: '1px solid #e8f0e9',
+            padding: '12px 16px',
+          },
+          body: {
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            padding: 0,
+            minHeight: 0,
+          },
+        }}
+      >
+        {reorderMessage && !activeOrderId && <Alert color="bamboo" role="status" m="xs" py="xs">{reorderMessage}</Alert>}
+        {attempt && !editingAttempt ? (
+          <Stack p="md" aria-live="polite">
+            <Text>{checkoutError || 'Đang kiểm tra đơn đã gửi. Giỏ hàng vẫn được lưu cho đến khi hệ thống xác nhận.'}</Text>
+            <Button loading={submittingOrder} onClick={handleCreateOrder}>Thử xác nhận lại đơn</Button>
+            <Button variant="default" disabled={submittingOrder} onClick={() => {
+              setEditingAttempt(true);
+              setCheckoutError('');
+            }}>Quay lại chỉnh giỏ</Button>
+            <Button component="a" href={`tel:${siteConfig.hotline}`} variant="light">Gọi quán để kiểm tra</Button>
+          </Stack>
+        ) : (
+          items.length === 0 ? (
+            <Stack p="md" className="cart-drawer-scrollable" style={{ overflowY: 'auto' }}>
+              <Stack align="center" py="lg">
+                <IconShoppingCart size={48} color="#badcc3" stroke={1.2} />
+                <Text fw={600}>Giỏ hàng đang trống</Text>
+                <Button variant="light" onClick={onClose}>Xem thực đơn</Button>
+              </Stack>
+              {recentOrderList}
+            </Stack>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minHeight: 0 }}>
+              {/* Scrollable list */}
+              <div
+                className="cart-drawer-scrollable"
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  WebkitOverflowScrolling: 'touch',
+                  overscrollBehavior: 'contain',
+                  padding: '14px 16px',
+                  minHeight: 0,
+                }}
+              >
+                <Stack gap="sm">
+                  {items.map((cartItem) => (
+                    <Card
+                      key={cartItem.cartId}
+                      withBorder
+                      radius="md"
+                      padding="sm"
+                      style={{ backgroundColor: '#ffffff', border: '1px solid #e1ece2' }}
+                    >
+                      <Group justify="space-between" align="flex-start" wrap="nowrap">
+                        <div style={{ flex: 1 }}>
+                          <Text fw={700} size="sm" c="#174421">
+                            {cartItem.item.name}
+                          </Text>
+
+                          {(cartItem.ice || cartItem.sugar) && (
+                            <Group gap={4} mt={2}>
+                              {cartItem.ice && (
+                                <Badge size="xs" variant="outline" color="bamboo">
+                                  {cartItem.ice}
+                                </Badge>
+                              )}
+                              {cartItem.sugar && (
+                                <Badge size="xs" variant="outline" color="coffee">
+                                  {cartItem.sugar}
+                                </Badge>
+                              )}
+                            </Group>
+                          )}
+
+                          {cartItem.note && (
+                            <Text size="xs" c="#607667" mt={3} fs="italic">
+                              "{cartItem.note}"
+                            </Text>
+                          )}
+
+                          <Text fw={700} size="sm" c="#215c2f" mt={4}>
+                            {formatPrice(cartItem.totalPrice)}
+                          </Text>
+                        </div>
+
+                        {/* Quantity controls */}
+                        <Group gap={4} align="center">
+                          <ActionIcon
+                            size="sm"
+                            variant="default"
+                            onClick={() => onUpdateQuantity(cartItem.cartId, -1)}
+                            aria-label="Giảm số lượng"
+                          >
+                            <IconMinus size={12} />
+                          </ActionIcon>
+                          <Text size="sm" fw={700} style={{ minWidth: 24, textAlign: 'center' }}>
+                            {cartItem.quantity}
+                          </Text>
+                          <ActionIcon
+                            size="sm"
+                            variant="default"
+                            disabled={cartItem.quantity >= 99}
+                            onClick={() => onUpdateQuantity(cartItem.cartId, 1)}
+                            aria-label="Tăng số lượng"
+                          >
+                            <IconPlus size={12} />
+                          </ActionIcon>
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            onClick={() => onRemoveItem(cartItem.cartId)}
+                            aria-label="Xoá món"
+                            ml={4}
+                          >
+                            <IconTrash size={14} />
+                          </ActionIcon>
+                        </Group>
+                      </Group>
+                    </Card>
+                  ))}
+
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={onClearCart}
+                    style={{ alignSelf: 'flex-end' }}
                   >
-                    {activeOrder.status === 'pending'
-                      ? '1. Quán đang soạn món'
-                      : activeOrder.status === 'served'
-                      ? '2. Đã phục vụ - Chờ thanh toán'
-                      : activeOrder.status === 'completed'
-                      ? '3. Đã thanh toán & Hoàn tất'
-                      : 'Đã hủy đơn'}
-                  </Badge>
+                    Xóa tất cả món
+                  </Button>
+                </Stack>
+
+                <Divider my="md" />
+
+                <NumberInput
+                  label="Số người"
+                  placeholder="Ví dụ: 5"
+                  value={partySize}
+                  onChange={setPartySize}
+                  min={1}
+                  max={99}
+                  allowDecimal={false}
+                  allowNegative={false}
+                  mb="sm"
+                />
+                <Textarea
+                  label="Yêu cầu cho quán (không bắt buộc)"
+                  placeholder="Ví dụ: Chuẩn bị 5 ly nước lọc, phục vụ tại bàn 3"
+                  value={generalNote}
+                  maxLength={500}
+                  onChange={(e) => setGeneralNote(e.currentTarget.value)}
+                  minRows={2}
+                  size="sm"
+                  radius="md"
+                  mb="md"
+                />
+
+                {/* Payment Method Selector */}
+                <Stack gap="xs" mb="md">
+                  <Text fw={700} size="sm" c="#174421">
+                    Phương thức thanh toán dự kiến:
+                  </Text>
+                  <SegmentedControl
+                    value={paymentMethod}
+                    onChange={(val) => setPaymentMethod(val as PaymentMethod)}
+                    data={[
+                      { label: '💳 Quét VietQR', value: 'vietqr' },
+                      { label: '💵 Tiền Mặt', value: 'cash' },
+                    ]}
+                    color="bamboo"
+                    fullWidth
+                  />
+                </Stack>
+                {recentOrderList}
+              </div>
+
+              {/* FIXED BOTTOM FOOTER: BẤM ĐẶT MÓN */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  padding: '12px 16px calc(14px + env(safe-area-inset-bottom, 0px)) 16px',
+                  borderTop: '1px solid #e1ece2',
+                  backgroundColor: '#ffffff',
+                  boxShadow: '0 -4px 16px rgba(0, 0, 0, 0.04)',
+                }}
+              >
+                <Group justify="space-between" align="center" mb="xs">
+                  <Text fw={600} size="sm" c="#344b3c">
+                    Tổng Tiền ({totalItemCount} món):
+                  </Text>
+                  <Text
+                    fw={800}
+                    style={{
+                      fontFamily: 'var(--font-heading)',
+                      color: '#215c2f',
+                      fontSize: '1.4rem',
+                    }}
+                  >
+                    {formatPrice(totalAmount)}
+                  </Text>
                 </Group>
 
-                {/* Progress Indicators */}
-                <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
-                  <div
-                    style={{
-                      flex: 1,
-                      height: '6px',
-                      borderRadius: '4px',
-                      backgroundColor: '#226135',
-                    }}
-                  />
-                  <div
-                    style={{
-                      flex: 1,
-                      height: '6px',
-                      borderRadius: '4px',
-                      backgroundColor:
-                        activeOrder.status === 'served' || activeOrder.status === 'completed'
-                          ? '#226135'
-                          : '#e2ede4',
-                    }}
-                  />
-                  <div
-                    style={{
-                      flex: 1,
-                      height: '6px',
-                      borderRadius: '4px',
-                      backgroundColor: activeOrder.status === 'completed' ? '#226135' : '#e2ede4',
-                    }}
-                  />
-                </div>
-              </Paper>
-
-              {/* BƯỚC 1: QUÁN ĐANG SOẠN MÓN (status === 'pending') */}
-              {activeOrder.status === 'pending' && (
-                <Card
-                  withBorder
-                  radius="md"
-                  p="md"
-                  style={{
-                    backgroundColor: '#fffdf5',
-                    border: '1.5px solid #ffe066',
-                    textAlign: 'center',
-                  }}
-                >
-                  <ThemeIcon size={48} radius="xl" color="yellow" variant="light" style={{ margin: '0 auto 8px auto' }}>
-                    <IconClock size={26} />
-                  </ThemeIcon>
-                  <Text fw={800} size="md" c="#d9480f" mb={4}>
-                    Chủ Quán Đã Nhận Đơn & Đang Soạn Món...
-                  </Text>
-                  <Text size="xs" c="#607667" style={{ lineHeight: 1.5 }}>
-                    Đơn hàng của bạn đã hiển thị tức thì trên màn hình quản lý của quán. Chủ quán đang tiến hành pha chế theo yêu cầu của bạn.
-                  </Text>
-                  <Text size="xs" c="#226135" fw={700} mt={8}>
-                    💡 Khi nước được mang ra bàn, màn hình sẽ tự động chuyển sang bước quét mã QR thanh toán!
-                  </Text>
+                <Stack gap="xs">
+                  {checkoutError && (
+                    <Alert color="red" role="alert">
+                      {checkoutError}
+                      {cartNeedsRefresh && (
+                        <Button mt="xs" variant="light" fullWidth onClick={() => {
+                          onRefreshCart();
+                          setCartNeedsRefresh(false);
+                          setCheckoutError('');
+                        }}>
+                          Cập nhật món và giá trong giỏ
+                        </Button>
+                      )}
+                    </Alert>
+                  )}
+                  {activeOrderId ? (
+                    <Stack gap="xs">
+                      <Text size="sm" c="dimmed">
+                        {activeOrder?.status === 'completed' || activeOrder?.status === 'cancelled'
+                          ? 'Ẩn đơn trước trong mục theo dõi để gửi giỏ này.'
+                          : 'Giỏ này được lưu để đặt sau khi đơn hiện tại kết thúc.'}
+                      </Text>
+                      <Button variant="light" onClick={onShowOrder}>Xem đơn hiện tại</Button>
+                    </Stack>
+                  ) : (
+                  <Button
+                    color="bamboo"
+                    size="md"
+                    fullWidth
+                    loading={submittingOrder}
+                    leftSection={<IconReceipt size={20} />}
+                    onClick={handleCreateOrder}
+                    style={{ fontWeight: 800 }}
+                  >
+                    Gửi đơn cho quán
+                  </Button>
+                  )}
 
                   <Button
                     component="a"
-                    href={`https://zalo.me/${siteConfig.zalo}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    variant="light"
-                    color="blue"
-                    size="xs"
-                    mt="md"
+                    href={`tel:${siteConfig.hotline}`}
+                    variant="outline"
+                    color="bamboo"
+                    size="sm"
                     fullWidth
+                    leftSection={<IconPhone size={16} />}
                   >
-                    Nhắn Thêm Với Quán Qua Zalo (0365 777 113)
+                    Gọi Hotline Quán: {siteConfig.hotlineDisplay}
                   </Button>
-                </Card>
-              )}
-
-              {/* BƯỚC 2: CHỦ QUÁN ĐÃ BẤM PHỤC VỤ (status === 'served') ➔ HIỆN MÃ QR / THANH TOÁN */}
-              {activeOrder.status === 'served' && (
-                <Card
-                  withBorder
-                  radius="md"
-                  p="md"
-                  style={{
-                    backgroundColor: '#f7faf7',
-                    border: '1.5px solid #226135',
-                  }}
-                >
-                  <Group gap="xs" align="center" mb="xs">
-                    <ThemeIcon size={32} radius="xl" color="bamboo" variant="filled">
-                      <IconCup size={18} />
-                    </ThemeIcon>
-                    <div>
-                      <Text fw={800} size="sm" c="#174421">
-                        Món Đã Được Phục Vụ!
-                      </Text>
-                      <Text size="11px" c="#546c5c">
-                        Vui lòng thanh toán cho quán theo thông tin bên dưới:
-                      </Text>
-                    </div>
-                  </Group>
-
-                  {/* Thanh toán VietQR */}
-                  {activeOrder.paymentMethod === 'vietqr' ? (
-                    <div style={{ textAlign: 'center', marginTop: '6px' }}>
-                      {/* Large Crisp QR Image */}
-                      <div
-                        style={{
-                          display: 'inline-block',
-                          padding: '6px',
-                          backgroundColor: '#ffffff',
-                          borderRadius: '8px',
-                          border: '2px solid #226135',
-                          boxShadow: '0 4px 14px rgba(34, 97, 53, 0.12)',
-                        }}
-                      >
-                        <img
-                          src={vietQrUrl}
-                          alt="VietQR thanh toán"
-                          style={{
-                            width: '100%',
-                            maxWidth: '230px',
-                            height: 'auto',
-                            aspectRatio: '1',
-                            display: 'block',
-                            borderRadius: '4px',
-                          }}
-                        />
-                      </div>
-
-                      <Text fw={800} size="md" c="#226135" mt={6}>
-                        {formatPrice(activeOrder.totalAmount)}
-                      </Text>
-
-                      <Stack gap={6} mt="xs">
-                        <Button
-                          size="xs"
-                          color="bamboo"
-                          variant="filled"
-                          fullWidth
-                          loading={downloadingQr}
-                          leftSection={<IconDownload size={15} />}
-                          onClick={handleDownloadQr}
-                          style={{ fontWeight: 700 }}
-                        >
-                          Tải Mã QR Về Máy ({formatPrice(activeOrder.totalAmount)})
-                        </Button>
-
-                        <Button
-                          component="a"
-                          href={vietQrUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          size="xs"
-                          color="bamboo"
-                          variant="light"
-                          fullWidth
-                          leftSection={<IconExternalLink size={14} />}
-                        >
-                          Mở Ảnh QR / App Ngân Hàng
-                        </Button>
-                      </Stack>
-
-                      <Group justify="center" mt={6}>
-                        <CopyButton value={siteConfig.bankInfo.accountNumber} timeout={2000}>
-                          {({ copied, copy }) => (
-                            <Button
-                              size="compact-xs"
-                              variant="subtle"
-                              color={copied ? 'teal' : 'gray'}
-                              onClick={copy}
-                              leftSection={copied ? <IconCheck size={12} /> : <IconCopy size={12} />}
-                            >
-                              {copied ? 'Đã chép STK: 3657771130' : 'Sao chép STK: 3657771130 (Techcombank)'}
-                            </Button>
-                          )}
-                        </CopyButton>
-                      </Group>
-                    </div>
-                  ) : (
-                    /* Thanh toán Tiền Mặt */
-                    <Paper withBorder p="sm" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#b8d7be' }}>
-                      <Group gap="sm" align="flex-start" wrap="nowrap">
-                        <ThemeIcon size={36} radius="xl" color="bamboo" variant="light">
-                          <IconCash size={20} />
-                        </ThemeIcon>
-                        <div>
-                          <Text fw={700} size="sm" c="#174421" mb={2}>
-                            Thanh Toán Tiền Mặt
-                          </Text>
-                          <Text size="xs" c="#3c5545" style={{ lineHeight: 1.5 }}>
-                            Quý khách vui lòng gửi tiền mặt <b>{formatPrice(activeOrder.totalAmount)}</b> trực tiếp cho chủ quán hoặc nhân viên nhé!
-                          </Text>
-                        </div>
-                      </Group>
-                    </Paper>
-                  )}
-
-                  {/* Nút Khách Xác Nhận Đã Chuyển Tiền / Gửi Tiền */}
-                  <Divider my="sm" />
-                  {activeOrder.customerPaid ? (
-                    <Alert color="teal" radius="md" icon={<IconCheck size={16} />}>
-                      <Text size="xs" fw={700}>
-                        Bạn đã báo thanh toán! Đang chờ chủ quán kiểm tra và chốt đơn...
-                      </Text>
-                    </Alert>
-                  ) : (
-                    <Button
-                      color="teal"
-                      size="md"
-                      fullWidth
-                      loading={markingPaid}
-                      leftSection={<IconCheck size={18} />}
-                      onClick={handleCustomerMarkPaid}
-                      style={{ fontWeight: 800 }}
-                    >
-                      Tôi Đã Chuyển Khoản / Đã Gửi Tiền
-                    </Button>
-                  )}
-                </Card>
-              )}
-
-              {/* BƯỚC 3: ĐÃ THU TIỀN VÀ HOÀN TẤT ĐƠN (status === 'completed') */}
-              {activeOrder.status === 'completed' && (
-                <Card
-                  withBorder
-                  radius="md"
-                  p="lg"
-                  style={{
-                    backgroundColor: '#f0fdf4',
-                    border: '2px solid #22c55e',
-                    textAlign: 'center',
-                  }}
-                >
-                  <ThemeIcon size={56} radius="xl" color="teal" variant="filled" style={{ margin: '0 auto 10px auto' }}>
-                    <IconCheck size={32} stroke={3} />
-                  </ThemeIcon>
-                  <Text fw={800} size="lg" c="#15803d" mb={4} style={{ fontFamily: 'var(--font-heading)' }}>
-                    ĐÃ THANH TOÁN THÀNH CÔNG!
-                  </Text>
-                  <Text size="xs" c="#166534" mb="md" style={{ lineHeight: 1.6 }}>
-                    Chủ quán đã xác nhận nhận đủ tiền đơn hàng <b>#{activeOrder.orderCode}</b> ({formatPrice(activeOrder.totalAmount)}).
-                    <br />
-                    Xuân Phạm Coffee House xin chân thành cảm ơn quý khách! Chúc quý khách một ngày thật an yên và sảng khoái!
-                  </Text>
-
-                  <Button color="bamboo" size="sm" fullWidth onClick={handleResetForNewOrder} leftSection={<IconPlus size={16} />}>
-                    Gọi Thêm Món Mới
-                  </Button>
-                </Card>
-              )}
-
-              {/* BƯỚC 4: ĐƠN HÀNG ĐÃ BỊ HỦY (status === 'cancelled') */}
-              {activeOrder.status === 'cancelled' && (
-                <Card
-                  withBorder
-                  radius="md"
-                  p="lg"
-                  style={{
-                    backgroundColor: '#fff5f5',
-                    border: '1.5px solid #ffc9c9',
-                    textAlign: 'center',
-                  }}
-                >
-                  <ThemeIcon size={52} radius="xl" color="red" variant="light" style={{ margin: '0 auto 10px auto' }}>
-                    <IconAlertCircle size={28} />
-                  </ThemeIcon>
-                  <Text fw={800} size="md" c="#e03131" mb={4} style={{ fontFamily: 'var(--font-heading)' }}>
-                    ĐƠN HÀNG ĐÃ BỊ HỦY
-                  </Text>
-                  <Text size="xs" c="#607667" mb="md" style={{ lineHeight: 1.5 }}>
-                    Chủ quán đã hủy đơn hàng <b>#{activeOrder.orderCode}</b> này.
-                    <br />
-                    Quý khách có thể chọn món mới từ thực đơn hoặc liên hệ trực tiếp với quán nhé!
-                  </Text>
-
-                  <Stack gap="xs">
-                    <Button
-                      color="bamboo"
-                      size="md"
-                      fullWidth
-                      onClick={handleResetForNewOrder}
-                      leftSection={<IconRefresh size={18} />}
-                      style={{ fontWeight: 700 }}
-                    >
-                      Chọn Món Mới Ngay
-                    </Button>
-
-                    <Button
-                      component="a"
-                      href={`https://zalo.me/${siteConfig.zalo}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      variant="outline"
-                      color="blue"
-                      size="xs"
-                      fullWidth
-                    >
-                      Nhắn Hỏi Quán Qua Zalo (0365 777 113)
-                    </Button>
-                  </Stack>
-                </Card>
-              )}
-
-              {/* Chi tiết các món đã đặt */}
-              <Paper withBorder p="sm" radius="md" style={{ backgroundColor: '#ffffff', borderColor: '#e1ece2' }}>
-                <Text fw={700} size="xs" c="#607667" mb="xs" style={{ textTransform: 'uppercase' }}>
-                  Các món trong đơn:
-                </Text>
-                <Stack gap={6}>
-                  {activeOrder.items.map((it, idx) => (
-                    <Group key={idx} justify="space-between" align="center">
-                      <div>
-                        <Text size="sm" fw={700} c="#174421">
-                          {it.quantity}x {it.name}
-                        </Text>
-                        {(it.ice || it.sugar || it.note) && (
-                          <Text size="xs" c="#607667">
-                            {it.ice} • {it.sugar} {it.note ? `(${it.note})` : ''}
-                          </Text>
-                        )}
-                      </div>
-                      <Text size="sm" fw={700} c="#226135">
-                        {formatPrice(it.totalPrice)}
-                      </Text>
-                    </Group>
-                  ))}
                 </Stack>
-
-                <Divider my="xs" />
-
-                <Group justify="space-between" align="center">
-                  <Text fw={700} size="sm">
-                    Tổng tiền:
-                  </Text>
-                  <Text fw={800} size="md" c="#226135" style={{ fontFamily: 'var(--font-heading)' }}>
-                    {formatPrice(activeOrder.totalAmount)}
-                  </Text>
-                </Group>
-              </Paper>
-            </Stack>
-          </div>
-
-          {/* Footer nút hành động tương ứng trạng thái */}
-          <div
-            style={{
-              flexShrink: 0,
-              padding: '12px 16px calc(14px + env(safe-area-inset-bottom, 0px)) 16px',
-              borderTop: '1px solid #e1ece2',
-              backgroundColor: '#ffffff',
-            }}
-          >
-            {activeOrder.status === 'cancelled' ? (
-              <Button
-                color="bamboo"
-                size="md"
-                fullWidth
-                onClick={handleResetForNewOrder}
-                leftSection={<IconRefresh size={18} />}
-                style={{ fontWeight: 700 }}
-              >
-                Chọn Món Mới Ngay
-              </Button>
-            ) : activeOrder.status === 'completed' ? (
-              <Button
-                color="bamboo"
-                size="md"
-                fullWidth
-                onClick={handleResetForNewOrder}
-                leftSection={<IconPlus size={18} />}
-                style={{ fontWeight: 700 }}
-              >
-                Gọi Thêm Món Mới
-              </Button>
-            ) : (
-              <Button variant="default" fullWidth onClick={onClose}>
-                Đóng Cửa Sổ (Đơn Đang Chạy)
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : (
-        /* ========================================================
-           CASE 2: CHƯA CÓ ĐƠN HÀNG ➔ MÀN HÌNH CHỌN MÓN & TẠO ĐƠN
-           ======================================================== */
-        items.length === 0 ? (
-          <Stack align="center" justify="center" py="4rem" style={{ flex: 1, padding: '16px' }}>
-            <IconShoppingCart size={64} color="#badcc3" stroke={1.2} />
-            <Text fw={600} size="lg" c="#2b4c34">
-              Giỏ hàng của bạn đang trống
-            </Text>
-            <Text size="sm" c="#607667" ta="center" style={{ maxWidth: 280 }}>
-              Hãy chọn các món cà phê mộc, trà trái cây hoặc sinh tố mát lạnh từ thực đơn nhé!
-            </Text>
-            <Button color="bamboo" variant="light" onClick={onClose} mt="sm">
-              Xem thực đơn quán
-            </Button>
-          </Stack>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minHeight: 0 }}>
-            {/* Scrollable list */}
-            <div
-              className="cart-drawer-scrollable"
-              style={{
-                flex: 1,
-                overflowY: 'auto',
-                WebkitOverflowScrolling: 'touch',
-                overscrollBehavior: 'contain',
-                padding: '14px 16px',
-                minHeight: 0,
-              }}
-            >
-              <Stack gap="sm">
-                {items.map((cartItem) => (
-                  <Card
-                    key={cartItem.cartId}
-                    withBorder
-                    radius="md"
-                    padding="sm"
-                    style={{ backgroundColor: '#ffffff', border: '1px solid #e1ece2' }}
-                  >
-                    <Group justify="space-between" align="flex-start" wrap="nowrap">
-                      <div style={{ flex: 1 }}>
-                        <Text fw={700} size="sm" c="#174421">
-                          {cartItem.item.name}
-                        </Text>
-
-                        {(cartItem.ice || cartItem.sugar) && (
-                          <Group gap={4} mt={2}>
-                            {cartItem.ice && (
-                              <Badge size="xs" variant="outline" color="bamboo">
-                                {cartItem.ice}
-                              </Badge>
-                            )}
-                            {cartItem.sugar && (
-                              <Badge size="xs" variant="outline" color="coffee">
-                                {cartItem.sugar}
-                              </Badge>
-                            )}
-                          </Group>
-                        )}
-
-                        {cartItem.note && (
-                          <Text size="xs" c="#607667" mt={3} fs="italic">
-                            "{cartItem.note}"
-                          </Text>
-                        )}
-
-                        <Text fw={700} size="sm" c="#215c2f" mt={4}>
-                          {formatPrice(cartItem.totalPrice)}
-                        </Text>
-                      </div>
-
-                      {/* Quantity controls */}
-                      <Group gap={4} align="center">
-                        <ActionIcon
-                          size="sm"
-                          variant="default"
-                          onClick={() => onUpdateQuantity(cartItem.cartId, -1)}
-                          aria-label="Giảm số lượng"
-                        >
-                          <IconMinus size={12} />
-                        </ActionIcon>
-                        <Text size="sm" fw={700} style={{ minWidth: 24, textAlign: 'center' }}>
-                          {cartItem.quantity}
-                        </Text>
-                        <ActionIcon
-                          size="sm"
-                          variant="default"
-                          onClick={() => onUpdateQuantity(cartItem.cartId, 1)}
-                          aria-label="Tăng số lượng"
-                        >
-                          <IconPlus size={12} />
-                        </ActionIcon>
-                        <ActionIcon
-                          size="sm"
-                          variant="subtle"
-                          color="red"
-                          onClick={() => onRemoveItem(cartItem.cartId)}
-                          aria-label="Xoá món"
-                          ml={4}
-                        >
-                          <IconTrash size={14} />
-                        </ActionIcon>
-                      </Group>
-                    </Group>
-                  </Card>
-                ))}
-
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  color="gray"
-                  onClick={onClearCart}
-                  style={{ alignSelf: 'flex-end' }}
-                >
-                  Xóa tất cả món
-                </Button>
-              </Stack>
-
-              <Divider my="md" />
-
-              {/* Optional Order Note */}
-              <Textarea
-                label="Ghi chú cho quán (nếu có):"
-                placeholder="Ví dụ: Tách đá riêng, ít ngọt, nhiều đá..."
-                value={generalNote}
-                onChange={(e) => setGeneralNote(e.currentTarget.value)}
-                minRows={2}
-                size="sm"
-                radius="md"
-                mb="md"
-              />
-
-              {/* Payment Method Selector */}
-              <Stack gap="xs" mb="md">
-                <Text fw={700} size="sm" c="#174421">
-                  Phương thức thanh toán dự kiến:
-                </Text>
-                <SegmentedControl
-                  value={paymentMethod}
-                  onChange={(val) => setPaymentMethod(val as PaymentMethod)}
-                  data={[
-                    { label: '💳 Quét VietQR', value: 'vietqr' },
-                    { label: '💵 Tiền Mặt', value: 'cash' },
-                  ]}
-                  color="bamboo"
-                  fullWidth
-                />
-              </Stack>
+              </div>
             </div>
-
-            {/* FIXED BOTTOM FOOTER: BẤM ĐẶT MÓN */}
-            <div
-              style={{
-                flexShrink: 0,
-                padding: '12px 16px calc(14px + env(safe-area-inset-bottom, 0px)) 16px',
-                borderTop: '1px solid #e1ece2',
-                backgroundColor: '#ffffff',
-                boxShadow: '0 -4px 16px rgba(0, 0, 0, 0.04)',
-              }}
-            >
-              <Group justify="space-between" align="center" mb="xs">
-                <Text fw={600} size="sm" c="#344b3c">
-                  Tổng Tiền ({totalItemCount} món):
-                </Text>
-                <Text
-                  fw={800}
-                  style={{
-                    fontFamily: 'var(--font-heading)',
-                    color: '#215c2f',
-                    fontSize: '1.4rem',
-                  }}
-                >
-                  {formatPrice(totalAmount)}
-                </Text>
-              </Group>
-
-              <Stack gap="xs">
-                <Button
-                  color="bamboo"
-                  size="md"
-                  fullWidth
-                  loading={submittingOrder}
-                  leftSection={<IconReceipt size={20} />}
-                  onClick={handleCreateOrder}
-                  style={{ fontWeight: 800 }}
-                >
-                  Tạo Đơn Hàng & Đặt Món Ngay
-                </Button>
-
-                <Button
-                  component="a"
-                  href={`tel:${siteConfig.hotline}`}
-                  variant="outline"
-                  color="bamboo"
-                  size="sm"
-                  fullWidth
-                  leftSection={<IconPhone size={16} />}
-                >
-                  Gọi Hotline Quán: {siteConfig.hotlineDisplay}
-                </Button>
-              </Stack>
-            </div>
-          </div>
-        )
-      )}
-    </Drawer>
+          )
+        )}
+      </Drawer>
+    </>
   );
 };
