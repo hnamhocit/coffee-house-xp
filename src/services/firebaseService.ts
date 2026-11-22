@@ -81,6 +81,7 @@ export const subscribeProducts = (
               image: data.image || "/images/drinks/cf-muoi.jpg",
               badge: data.badge || undefined,
               allowCustomization: data.allowCustomization !== false,
+              available: data.available !== false,
             });
           });
           callback(products);

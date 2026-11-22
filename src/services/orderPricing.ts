@@ -3,7 +3,7 @@ import type { OrderItemDetail } from '../types/order';
 
 export class OrderPricingError extends Error {}
 
-export async function priceOrderItems(db: Firestore, transaction: Transaction, input: OrderItemDetail[]) {
+export async function priceOrderItems(db: Firestore, transaction: Transaction, input: OrderItemDetail[], requireAvailable = false) {
   if (!Array.isArray(input) || input.length < 1 || input.length > 40 || input.some((line) =>
     !line || typeof line.id !== 'string' || !/^[\w-]{1,128}$/.test(line.id)
     || !Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 99)) {
@@ -17,6 +17,10 @@ export async function priceOrderItems(db: Firestore, transaction: Transaction, i
     const product = products.get(id);
     if (typeof product?.name !== 'string' || !Number.isSafeInteger(product.price) || product.price < 0) {
       throw new OrderPricingError('Có món đã ngừng bán. Vui lòng kiểm tra lại đơn.');
+    }
+
+    if (requireAvailable && product.available === false) {
+      throw new OrderPricingError(`${product.name} đã hết hàng. Hãy cập nhật giỏ hàng.`);
     }
 
     const option = (value: unknown, limit: number) => typeof value === 'string' ? value.trim().slice(0, limit) : '';

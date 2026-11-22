@@ -230,6 +230,12 @@ export const AdminApp: React.FC = () => {
       return;
     }
 
+    const unavailable = manualCart.find(({ item }) => !products.some((product) => product.id === item.id && product.available !== false));
+    if (unavailable) {
+      notifications.show({ color: 'red', message: `${unavailable.item.name} đã hết hàng hoặc ngừng bán. Hãy bỏ món khỏi đơn.` });
+      return;
+    }
+
     try {
       setSavingManualOrder(true);
       const totalAmount = manualCart.reduce(
@@ -1001,7 +1007,7 @@ export const AdminApp: React.FC = () => {
           setManualPaymentMethod={setManualPaymentMethod}
           manualInitialStatus={manualInitialStatus}
           setManualInitialStatus={setManualInitialStatus}
-          products={products}
+          products={products.filter(({ available }) => available !== false)}
           manualSearchQuery={manualSearchQuery}
           setManualSearchQuery={setManualSearchQuery}
           formatPrice={formatPrice}

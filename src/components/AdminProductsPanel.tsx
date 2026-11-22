@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Group,
   Stack,
   Select,
+  Switch,
   Text,
   Button,
   Badge,
@@ -13,6 +14,8 @@ import {
 } from '@mantine/core';
 import { IconPlus, IconEdit, IconTrash, IconRefresh, IconSearch } from '@tabler/icons-react';
 import type { MenuItem } from '../data/menuData';
+import { notifications } from '@mantine/notifications';
+import { updateProduct } from '../services/firebaseService';
 import { CATEGORIES } from '../data/menuData';
 
 interface AdminProductsPanelProps {
@@ -42,6 +45,23 @@ export function AdminProductsPanel({
   handleOpenEditProduct,
   handleDeleteProduct,
 }: AdminProductsPanelProps) {
+  const [updatingStock, setUpdatingStock] = useState<Set<string>>(new Set());
+
+  const setAvailability = async (product: MenuItem, available: boolean) => {
+    setUpdatingStock((previous) => new Set(previous).add(product.id));
+    try {
+      await updateProduct(product.id, { available });
+    } catch {
+      notifications.show({ color: 'red', message: `Chưa đổi được tình trạng của ${product.name}. Hãy thử lại.` });
+    } finally {
+      setUpdatingStock((previous) => {
+        const next = new Set(previous);
+        next.delete(product.id);
+        return next;
+      });
+    }
+  };
+
   return (
     <Stack gap="md">
       {/* Controls Bar - Responsive Mobile Layout */}
@@ -105,6 +125,7 @@ export function AdminProductsPanel({
               <Table.Th>Tên Món Nước</Table.Th>
               <Table.Th>Danh Mục</Table.Th>
               <Table.Th>Giá Bán</Table.Th>
+              <Table.Th>Tình trạng</Table.Th>
               <Table.Th>Tùy Chọn Món</Table.Th>
               <Table.Th>Huy Hiệu</Table.Th>
               <Table.Th style={{ width: 110, textAlign: 'center' }}>Thao Tác</Table.Th>
@@ -144,6 +165,15 @@ export function AdminProductsPanel({
                   <Text fw={800} size="sm" c="#226135">
                     {formatPrice(p.price)}
                   </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Switch
+                    aria-label={`Còn hàng: ${p.name}`}
+                    label={p.available === false ? 'Hết hàng' : 'Còn hàng'}
+                    checked={p.available !== false}
+                    disabled={updatingStock.has(p.id)}
+                    onChange={(event) => void setAvailability(p, event.currentTarget.checked)}
+                  />
                 </Table.Td>
                 <Table.Td>
                   {p.allowCustomization !== false ? (

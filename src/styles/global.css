@@ -453,3 +453,19 @@ body:has(.mantine-Modal-content[aria-modal="true"]:not([data-hidden])) .mobile-c
     gap: 24px;
   }
 }
+
+.full-photo-card[data-sold-out] {
+  filter: grayscale(1);
+}
+
+.full-photo-card[data-sold-out]:hover {
+  transform: none;
+}
+
+.full-photo-card[data-sold-out]:hover .card-bg-img {
+  transform: none;
+}
+
+.full-photo-card[data-sold-out] .menu-item-action:disabled {
+  cursor: not-allowed;
+}

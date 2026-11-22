@@ -6,6 +6,7 @@ export interface MenuItem {
   image: string;
   badge?: "Best Seller" | "Mới" | "Thanh Mát" | "Đậm Đà" | "Ưu Đãi";
   allowCustomization?: boolean;
+  available?: boolean;
 }
 
 export type MenuCategory = 

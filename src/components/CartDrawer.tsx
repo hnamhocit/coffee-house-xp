@@ -54,6 +54,7 @@ interface CartDrawerProps {
   opened: boolean;
   onClose: () => void;
   items: CartItem[];
+  soldOutProductIds: ReadonlySet<string>;
   onUpdateQuantity: (cartId: string, delta: number) => void;
   onRemoveItem: (cartId: string) => void;
   onClearCart: () => void;
@@ -68,6 +69,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   opened,
   onClose,
   items,
+  soldOutProductIds,
   onUpdateQuantity,
   onRemoveItem,
   onClearCart,
@@ -207,8 +209,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   };
 
+  const hasSoldOutItems = items.some(({ item }) => soldOutProductIds.has(item.id));
+
   const handleCreateOrder = async () => {
-    if (submitting.current || activeOrderId || ((!attempt || editingAttempt) && items.length === 0)) return;
+    if (submitting.current || activeOrderId || ((!attempt || editingAttempt) && (items.length === 0 || hasSoldOutItems))) return;
     if (partySize !== '' && (typeof partySize !== 'number' || !Number.isInteger(partySize) || partySize < 1 || partySize > 99)) {
       setCheckoutError('Nhập số người từ 1 đến 99 hoặc để trống.');
       return;
@@ -440,6 +444,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         <div style={{ flex: 1 }}>
                           <Text fw={700} size="sm" c="#174421">
                             {cartItem.item.name}
+                            {soldOutProductIds.has(cartItem.item.id) && <Badge color="gray" ml="xs">Hết hàng</Badge>}
                           </Text>
 
                           {(cartItem.ice || cartItem.sugar) && (
@@ -484,7 +489,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           <ActionIcon
                             size="sm"
                             variant="default"
-                            disabled={cartItem.quantity >= 99}
+                            disabled={cartItem.quantity >= 99 || soldOutProductIds.has(cartItem.item.id)}
                             onClick={() => onUpdateQuantity(cartItem.cartId, 1)}
                             aria-label="Tăng số lượng"
                           >
@@ -601,6 +606,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       )}
                     </Alert>
                   )}
+                  {hasSoldOutItems && <Text size="sm" c="red.8" role="status">Xóa món hết hàng để tiếp tục đặt.</Text>}
                   {activeOrderId ? (
                     <Stack gap="xs">
                       <Text size="sm" c="dimmed">
@@ -616,6 +622,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     size="md"
                     fullWidth
                     loading={submittingOrder}
+                    disabled={hasSoldOutItems}
                     leftSection={<IconReceipt size={20} />}
                     onClick={handleCreateOrder}
                     style={{ fontWeight: 800 }}

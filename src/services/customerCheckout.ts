@@ -84,7 +84,7 @@ export async function submitCheckout({ requestId, checkout }: CheckoutAttempt) {
       name: '',
       price: line.expectedPrice,
       totalPrice: line.quantity * line.expectedPrice,
-    })));
+    })), true);
     if (priced.items.some((line, index) => line.price !== checkout.items[index].expectedPrice)) {
       throw new OrderPricingError('Giá món đã thay đổi. Hãy cập nhật giỏ hàng.');
     }

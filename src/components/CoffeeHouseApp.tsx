@@ -76,7 +76,10 @@ export const CoffeeHouseApp: React.FC = () => {
     }
   }, [cartItems, cartRestored]);
 
+  const soldOutProductIds = new Set(products.filter(({ available }) => available === false).map(({ id }) => id));
+
   const handleAddToCart = (item: MenuItem, quantity: number, ice?: string, sugar?: string, note?: string) => {
+    if (soldOutProductIds.has(item.id)) return;
     setCartItems((previous) => mergeCartItems(previous, [{ item, quantity, ice, sugar, note }]));
   };
 
@@ -84,7 +87,7 @@ export const CoffeeHouseApp: React.FC = () => {
     const catalog = new Map(products.map((item) => [item.id, item]));
     const available = lines.flatMap(({ id, quantity, ice, sugar, note }) => {
       const item = catalog.get(id);
-      return item ? [{ item, quantity, ice: item.allowCustomization ? ice : undefined, sugar: item.allowCustomization ? sugar : undefined, note }] : [];
+      return item && item.available !== false ? [{ item, quantity, ice: item.allowCustomization ? ice : undefined, sugar: item.allowCustomization ? sugar : undefined, note }] : [];
     });
 
     if (available.length) setCartItems((previous) => mergeCartItems(previous, available));
@@ -118,7 +121,7 @@ export const CoffeeHouseApp: React.FC = () => {
     const menu = new Map(products.map((product) => [product.id, product]));
     setCartItems((previous) => previous.flatMap((line) => {
       const item = menu.get(line.item.id);
-      if (!item) return [];
+      if (!item || item.available === false) return [];
       return [{ ...line, item, unitPrice: item.price, totalPrice: item.price * line.quantity }];
     }));
   };
@@ -173,6 +176,7 @@ export const CoffeeHouseApp: React.FC = () => {
             opened={cartDrawerOpen}
             onClose={() => setCartDrawerOpen(false)}
             items={cartItems}
+            soldOutProductIds={soldOutProductIds}
             onUpdateQuantity={handleUpdateQuantity}
             onRemoveItem={handleRemoveItem}
             onClearCart={handleClearCart}

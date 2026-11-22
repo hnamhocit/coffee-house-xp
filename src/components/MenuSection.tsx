@@ -55,7 +55,8 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
   const sourceItems = items ?? MENU_ITEMS;
 
   // Selected item modal state
-  const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const selectedItem = sourceItems.find((item) => item.id === selectedItemId);
   const [selectedIce, setSelectedIce] = useState('100% Đá');
   const [selectedSugar, setSelectedSugar] = useState('100% Đường');
   const [customNote, setCustomNote] = useState('');
@@ -103,7 +104,8 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
 
   // Handle clicking on any drink card to select it
   const handleSelectDrink = (item: MenuItem) => {
-    setSelectedItem(item);
+    if (item.available === false) return;
+    setSelectedItemId(item.id);
     setSelectedIce('100% Đá');
     setSelectedSugar('100% Đường');
     setCustomNote('');
@@ -112,7 +114,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
 
   // Add to cart from modal
   const handleAddToCartConfirm = () => {
-    if (!selectedItem) return;
+    if (!selectedItem || selectedItem.available === false) return;
 
     onAddToCart(
       selectedItem,
@@ -129,7 +131,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
       icon: <IconCheck size={18} />,
     });
 
-    setSelectedItem(null);
+    setSelectedItemId(null);
   };
 
   const formatPrice = (amount: number) => {
@@ -237,11 +239,12 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
                 <div
                   key={item.id}
                   className="full-photo-card"
+                  data-sold-out={item.available === false || undefined}
                 >
                   <button
                     type="button"
                     className="menu-item-action"
-                    disabled={!interactive}
+                    disabled={!interactive || item.available === false}
                     aria-label={`Chọn ${item.name}, ${formatPrice(item.price)}`}
                     onClick={() => handleSelectDrink(item)}
                   />
@@ -270,7 +273,9 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
                   >
                     {/* Top Badge */}
                     <div>
-                      {item.badge && (
+                      {item.available === false ? (
+                        <Badge color="gray" variant="filled">Hết hàng</Badge>
+                      ) : item.badge && (
                         <Badge
                           size="xs"
                           variant="filled"
@@ -323,7 +328,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
                           color="bamboo"
                           size={34}
                           radius="xl"
-                          disabled={!interactive}
+                          disabled={!interactive || item.available === false}
                           aria-label={`Thêm một phần ${item.name}`}
                           onClick={() => {
                             onAddToCart(item, 1, item.allowCustomization ? '100% Đá' : undefined, item.allowCustomization ? '100% Đường' : undefined);
@@ -344,7 +349,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
 
       <Modal
         opened={!!selectedItem}
-        onClose={() => setSelectedItem(null)}
+        onClose={() => setSelectedItemId(null)}
         title={
           <Group gap="xs">
             <IconCup size={20} color="#226135" />
@@ -482,6 +487,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
                 size="md"
                 fullWidth
                 leftSection={<IconShoppingCartPlus size={20} />}
+                disabled={selectedItem.available === false}
                 onClick={handleAddToCartConfirm}
                 style={{
                   backgroundColor: '#226135',
@@ -491,7 +497,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({ onAddToCart, items, in
                   boxShadow: '0 4px 14px rgba(34, 97, 53, 0.3)',
                 }}
               >
-                Thêm Vào Giỏ Hàng • {formatPrice(selectedItem.price * customQuantity)}
+                {selectedItem.available === false ? 'Hết hàng' : `Thêm Vào Giỏ Hàng • ${formatPrice(selectedItem.price * customQuantity)}`}
               </Button>
             </Stack>
           </Stack>
